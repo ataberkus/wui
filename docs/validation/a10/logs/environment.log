@@ -1,0 +1,17 @@
+{"command": ["cmd", "/c", "call out\\native-env.cmd && cl && cmake --version && ninja --version && ver"], "cwd": "C:\\Users\\Valo\\Desktop\\Desktop\\coding\\wui", "exit": 0, "seconds": 1.011}
+**********************************************************************
+** Visual Studio 2022 Developer Command Prompt v17.14.31
+** Copyright (c) 2025 Microsoft Corporation
+**********************************************************************
+[vcvarsall.bat] Environment initialized for: 'x64'
+x64 için Microsoft (R) C/C++ İyileştirmeli Derleyicisi Sürüm 19.44.35226
+Telif Hakkı (C) Microsoft Corporation. Tüm hakları saklıdır.
+
+kullanım: cl [ seçenek... ] dosyaadı... [ /link bağlantıseçeneği... ]
+cmake version 4.1.2 (CMake; JetBrains IDE bundle; build 36)
+debugging support enabled
+
+CMake suite maintained and supported by Kitware (kitware.com/cmake).
+1.12.1
+
+Microsoft Windows [Version 10.0.19045.6466]

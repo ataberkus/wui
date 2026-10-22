@@ -1,0 +1,32 @@
+a10 measurement
+boundary: UI-thread C++ allocation requests (plain/array/aligned/nothrow new), not direct malloc, other threads, driver allocations or whole-process heap freedom
+cpu scope: actual host Context::begin_frame + build_gallery + Frame::finish only; actual Adapter input drain, renderer/collect and successful swap-chain Present outside count
+GPU timing: unmeasured; Present/readback latency is not GPU timing
+prewarm: all four real Context packet slots retained together then released, outside count
+warmup: 120 actual successfully presented host frames per accepted batch
+samples: 300 actual successfully presented host frames, preallocated storage
+input/resize/DPI/suspension/recreation/model interruptions discard the entire batch and restart four-slot prewarm plus 120-frame warmup (maximum five attempts)
+scales are simulated render/input scales, not changed OS DPI
+full-gallery zero-allocation acceptance remains unproven if any measured counts are nonzero
+build=Debug driver=NVIDIA GeForce RTX 2080 Ti vendor=0x10DE device=0x1E07 luid=00000000:0000E5D8 feature=11_0 debug=yes driver=unavailable driver_hr=0x887A0004 debug=yes
+BEGIN scale-100 attempt=1
+PASS scale-100 csv=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\debug-hardware\scale-100.csv attempt=1 prewarm-slots=4 warmup-presents=120 sampled-presents=300 total-presents=420 scale=1.000000 physical=640x400 build=Debug driver=NVIDIA GeForce RTX 2080 Ti vendor=0x10DE device=0x1E07 luid=00000000:0000E5D8 feature=11_0 debug=yes driver=unavailable driver_hr=0x887A0004
+ cpp_alloc_calls sum=27900 min=93 max=93 cpp_alloc_bytes sum=4123200 min=13744 max=13744
+ cpu_us min=258.700000 median=262.300000 p95-nearest-rank=293.000000 max=474.800000
+debug-layer: available errors=0 warnings=0
+BEGIN scale-125 attempt=1
+PASS scale-125 csv=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\debug-hardware\scale-125.csv attempt=1 prewarm-slots=4 warmup-presents=120 sampled-presents=300 total-presents=420 scale=1.250000 physical=800x500 build=Debug driver=NVIDIA GeForce RTX 2080 Ti vendor=0x10DE device=0x1E07 luid=00000000:0000E5D8 feature=11_0 debug=yes driver=unavailable driver_hr=0x887A0004
+ cpp_alloc_calls sum=27900 min=93 max=93 cpp_alloc_bytes sum=4262400 min=14208 max=14208
+ cpu_us min=262.600000 median=266.000000 p95-nearest-rank=324.900000 max=718.200000
+debug-layer: available errors=0 warnings=0
+BEGIN scale-150 attempt=1
+PASS scale-150 csv=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\debug-hardware\scale-150.csv attempt=1 prewarm-slots=4 warmup-presents=120 sampled-presents=300 total-presents=420 scale=1.500000 physical=960x600 build=Debug driver=NVIDIA GeForce RTX 2080 Ti vendor=0x10DE device=0x1E07 luid=00000000:0000E5D8 feature=11_0 debug=yes driver=unavailable driver_hr=0x887A0004
+ cpp_alloc_calls sum=27900 min=93 max=93 cpp_alloc_bytes sum=4262400 min=14208 max=14208
+ cpu_us min=261.900000 median=266.350000 p95-nearest-rank=320.600000 max=715.900000
+debug-layer: available errors=0 warnings=0
+BEGIN scale-200 attempt=1
+PASS scale-200 csv=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\debug-hardware\scale-200.csv attempt=1 prewarm-slots=4 warmup-presents=120 sampled-presents=300 total-presents=420 scale=2.000000 physical=1280x800 build=Debug driver=NVIDIA GeForce RTX 2080 Ti vendor=0x10DE device=0x1E07 luid=00000000:0000E5D8 feature=11_0 debug=yes driver=unavailable driver_hr=0x887A0004
+ cpp_alloc_calls sum=27900 min=93 max=93 cpp_alloc_bytes sum=4893600 min=16312 max=16312
+ cpu_us min=283.000000 median=288.600000 p95-nearest-rank=325.800000 max=471.000000
+debug-layer: available errors=0 warnings=0
+PASS measurement

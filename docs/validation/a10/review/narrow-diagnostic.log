@@ -1,0 +1,27 @@
+**********************************************************************
+** Visual Studio 2022 Developer Command Prompt v17.14.31
+** Copyright (c) 2025 Microsoft Corporation
+**********************************************************************
+[vcvarsall.bat] Environment initialized for: 'x64'
+narrow-diagnostic.cpp
+real-text-service: Inter-Regular copied beside Debug gallery; Notifications size=14 scale=1 width=83.500000 height=18.000000
+viewport=640x400 scale=1.0 panel-inset=16.0 row-width=608.0 inner-width=592.0 preferred-box=18.0 gap=8.0 required=109.500000 stacked=0
+ role=0 label=Preferences bounds=0.000000,0.000000,640.000000,204.000000
+ role=1 label=Widget foundation bounds=16.000000,49.000000,608.000000,25.000000
+ role=1 label=İstanbul — reusable C++ controls bounds=16.000000,82.000000,608.000000,18.000000
+ role=3 label=Notifications bounds=16.000000,108.000000,608.000000,36.000000
+ role=2 label=Restore defaults bounds=16.000000,152.000000,608.000000,36.000000
+viewport=180x400 scale=1.0 panel-inset=16.0 row-width=148.0 inner-width=132.0 preferred-box=18.0 gap=8.0 required=109.500000 stacked=0
+ role=0 label=Preferences bounds=0.000000,0.000000,180.000000,204.000000
+ role=1 label=Widget foundation bounds=16.000000,49.000000,148.000000,25.000000
+ role=1 label=İstanbul — reusable C++ controls bounds=16.000000,82.000000,148.000000,18.000000
+ role=3 label=Notifications bounds=16.000000,108.000000,148.000000,36.000000
+ role=2 label=Restore defaults bounds=16.000000,152.000000,148.000000,36.000000
+viewport=160x400 scale=1.0 panel-inset=16.0 row-width=128.0 inner-width=112.0 preferred-box=18.0 gap=8.0 required=109.500000 stacked=0
+ role=0 label=Preferences bounds=0.000000,0.000000,160.000000,204.000000
+ role=1 label=Widget foundation bounds=16.000000,49.000000,128.000000,25.000000
+ role=1 label=İstanbul — reusable C++ controls bounds=16.000000,82.000000,128.000000,18.000000
+ role=3 label=Notifications bounds=16.000000,108.000000,128.000000,36.000000
+ role=2 label=Restore defaults bounds=16.000000,152.000000,128.000000,36.000000
+
+exit=0

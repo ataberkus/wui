@@ -1,0 +1,9 @@
+#pragma once
+
+// Generated from backends/renderer/d3d11_shaders.hlsl via CMake file(READ)
+// and configure_file. Private to wui_d3d11; never installed.
+namespace wui::d3d11::detail {
+
+inline constexpr char kShaderSource[] = R"WUI_D3D11(@D3D11_SHADER_SOURCE@)WUI_D3D11";
+
+} // namespace wui::d3d11::detail

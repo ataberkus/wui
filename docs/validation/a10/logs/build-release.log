@@ -1,0 +1,14 @@
+{"command": ["cmd", "/c", "call out\\native-env.cmd && cmake --build --preset win-d3d11-release"], "cwd": "C:\\Users\\Valo\\Desktop\\Desktop\\coding\\wui", "exit": 0, "seconds": 5.232}
+**********************************************************************
+** Visual Studio 2022 Developer Command Prompt v17.14.31
+** Copyright (c) 2025 Microsoft Corporation
+**********************************************************************
+[vcvarsall.bat] Environment initialized for: 'x64'
+[1/8] Building CXX object CMakeFiles\wui_allocation_probe.dir\tests\widgets\allocation_probe.cpp.obj
+[2/8] Linking CXX executable wui_allocation_probe.exe
+[3/8] Building CXX object CMakeFiles\wui_widget_gallery.dir\examples\widget_gallery\main_win32_d3d11.cpp.obj
+[4/8] Building CXX object CMakeFiles\wui_widget_gallery.dir\examples\widget_gallery\native_app.cpp.obj
+[5/8] Building CXX object CMakeFiles\wui_widget_gallery.dir\examples\widget_gallery\validation.cpp.obj
+[6/8] Building CXX object CMakeFiles\wui_d3d11_tests.dir\tests\renderers\d3d11_test.cpp.obj
+[7/8] Linking CXX executable wui_d3d11_tests.exe
+[8/8] Linking CXX executable wui_widget_gallery.exe

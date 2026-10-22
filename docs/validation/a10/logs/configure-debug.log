@@ -1,0 +1,9 @@
+{"command": ["cmd", "/c", "call out\\native-env.cmd && cmake --preset win-d3d11-debug -DWUI_BUILD_EXAMPLES=ON"], "cwd": "C:\\Users\\Valo\\Desktop\\Desktop\\coding\\wui", "exit": 0, "seconds": 1.614}
+**********************************************************************
+** Visual Studio 2022 Developer Command Prompt v17.14.31
+** Copyright (c) 2025 Microsoft Corporation
+**********************************************************************
+[vcvarsall.bat] Environment initialized for: 'x64'
+-- Configuring done (0.3s)
+-- Generating done (0.1s)
+-- Build files have been written to: C:/Users/Valo/Desktop/Desktop/coding/wui/out/win-d3d11-debug

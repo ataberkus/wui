@@ -1,0 +1,2 @@
+{"command": ["C:\\Users\\Valo\\Desktop\\Desktop\\coding\\wui\\out\\win-d3d11-release\\wui_widget_gallery.exe", "--help"], "cwd": "C:\\Users\\Valo\\Desktop\\Desktop\\coding\\wui", "exit": 0, "seconds": 0.006}
+usage: wui_widget_gallery [--driver hardware|warp] [--validate <dir> | --measure <dir>] [--help]

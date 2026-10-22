@@ -1,0 +1,16 @@
+#pragma once
+
+// Generated from include/wui/version.hpp.in by CMake; the version is set once,
+// in project(wui VERSION ...).
+
+#define WUI_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define WUI_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define WUI_VERSION_PATCH @PROJECT_VERSION_PATCH@
+#define WUI_VERSION_STRING "@PROJECT_VERSION@"
+
+namespace wui {
+inline constexpr int version_major = WUI_VERSION_MAJOR;
+inline constexpr int version_minor = WUI_VERSION_MINOR;
+inline constexpr int version_patch = WUI_VERSION_PATCH;
+inline constexpr const char* version_string = WUI_VERSION_STRING;
+} // namespace wui

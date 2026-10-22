@@ -1,0 +1,15 @@
+{"command": ["cmd", "/c", "call out\\native-env.cmd && cmake -S . -B out\\validation\\a\\core-only -G Ninja -DCMAKE_BUILD_TYPE=Debug -DWUI_BUILD_TESTS=OFF -DWUI_BUILD_EXAMPLES=OFF"], "cwd": "C:\\Users\\Valo\\Desktop\\Desktop\\coding\\wui", "exit": 0, "seconds": 1.451}
+**********************************************************************
+** Visual Studio 2022 Developer Command Prompt v17.14.31
+** Copyright (c) 2025 Microsoft Corporation
+**********************************************************************
+[vcvarsall.bat] Environment initialized for: 'x64'
+-- The CXX compiler identification is MSVC 19.44.35226.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Configuring done (0.5s)
+-- Generating done (0.0s)
+-- Build files have been written to: C:/Users/Valo/Desktop/Desktop/coding/wui/out/validation/a/core-only

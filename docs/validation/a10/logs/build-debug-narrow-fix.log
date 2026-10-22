@@ -1,0 +1,8 @@
+{"command": ["cmd", "/c", "call out\\native-env.cmd && cmake --build --preset win-d3d11-debug"], "cwd": "C:\\Users\\Valo\\Desktop\\Desktop\\coding\\wui", "exit": 0, "seconds": 2.571}
+**********************************************************************
+** Visual Studio 2022 Developer Command Prompt v17.14.31
+** Copyright (c) 2025 Microsoft Corporation
+**********************************************************************
+[vcvarsall.bat] Environment initialized for: 'x64'
+[1/2] Building CXX object CMakeFiles\wui_widget_gallery.dir\examples\widget_gallery\validation.cpp.obj
+[2/2] Linking CXX executable wui_widget_gallery.exe

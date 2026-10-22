@@ -1,0 +1,20 @@
+# Build trees, staged dependency prefixes and local tool output
+out/
+__pycache__/
+*.pyc
+
+# Dependency checkouts staged by tools/prepare_dependencies.py
+third_party/doctest/
+third_party/freetype/
+third_party/harfbuzz/
+third_party/utf8proc/
+
+# Local development notes, plans and agent state (not part of the library)
+HANDOFF.md
+pending.patch
+SOURCE_MANIFEST.json
+handoff-assets/
+state/
+.omp/
+.superpowers/
+docs/superpowers/

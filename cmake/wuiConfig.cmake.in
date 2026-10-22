@@ -1,0 +1,70 @@
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+
+# Each installed configuration records its components in wuiComponents-<Config>.cmake.
+file(GLOB _wui_component_files "${CMAKE_CURRENT_LIST_DIR}/wuiComponents-*.cmake")
+foreach(_wui_file IN LISTS _wui_component_files)
+    include("${_wui_file}")
+endforeach()
+
+# A single-config consumer must match an installed configuration.
+if(CMAKE_BUILD_TYPE)
+    set(_wui_config "${CMAKE_BUILD_TYPE}")
+    if(_wui_config MATCHES "^(RelWithDebInfo|MinSizeRel)$")
+        set(_wui_config Release)
+    endif()
+    if(NOT DEFINED wui_COMPONENTS_${_wui_config})
+        set(wui_FOUND FALSE)
+        set(wui_NOT_FOUND_MESSAGE
+            "wui was not installed for configuration ${_wui_config}; install a ${_wui_config} build into this prefix")
+        return()
+    endif()
+    set(_wui_installed ${wui_COMPONENTS_${_wui_config}})
+else()
+    set(_wui_installed ${wui_COMPONENTS_Release} ${wui_COMPONENTS_Debug})
+    list(REMOVE_DUPLICATES _wui_installed)
+endif()
+
+# wui is built with the DLL runtime (/MD, /MDd); mixing in /MT fails at link time.
+if(CMAKE_MSVC_RUNTIME_LIBRARY AND NOT CMAKE_MSVC_RUNTIME_LIBRARY MATCHES "DLL")
+    set(wui_FOUND FALSE)
+    set(wui_NOT_FOUND_MESSAGE
+        "wui is built with the DLL runtime (/MD, /MDd); CMAKE_MSVC_RUNTIME_LIBRARY=${CMAKE_MSVC_RUNTIME_LIBRARY} is incompatible")
+    return()
+endif()
+
+set(_wui_requested ${wui_FIND_COMPONENTS})
+if(NOT _wui_requested)
+    set(_wui_requested core)
+endif()
+foreach(_wui_component IN LISTS _wui_requested)
+    if(_wui_component IN_LIST _wui_installed)
+        set(wui_${_wui_component}_FOUND TRUE)
+    else()
+        set(wui_${_wui_component}_FOUND FALSE)
+        if(wui_FIND_REQUIRED_${_wui_component})
+            set(wui_FOUND FALSE)
+            set(wui_NOT_FOUND_MESSAGE
+                "wui component '${_wui_component}' is not installed (installed: ${_wui_installed})")
+            return()
+        endif()
+    endif()
+endforeach()
+
+# Vulkan is looked up only when the consumer asks for the vulkan component, so a
+# consumer of the other components needs no Vulkan SDK. Linking wui::vulkan without
+# requesting it fails at generate time because Vulkan::Vulkan does not exist.
+if("vulkan" IN_LIST _wui_requested)
+    find_dependency(Vulkan)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/wuiDependencies.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/wuiTargets.cmake")
+foreach(_wui_component IN ITEMS core text win32 d3d9 d3d10 d3d11 d3d12 vulkan text_dependencies)
+    if(TARGET wui::${_wui_component})
+        set_target_properties(wui::${_wui_component} PROPERTIES
+            MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release
+            MAP_IMPORTED_CONFIG_MINSIZEREL Release)
+    endif()
+endforeach()
+check_required_components(wui)

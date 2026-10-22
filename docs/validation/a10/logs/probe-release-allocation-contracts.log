@@ -1,0 +1,2 @@
+{"command": ["C:\\Users\\Valo\\Desktop\\Desktop\\coding\\wui\\out\\win-d3d11-release\\wui_allocation_probe.exe", "--allocation-contracts"], "cwd": "C:\\Users\\Valo\\Desktop\\Desktop\\coding\\wui", "exit": 0, "seconds": 0.004}
+Scalar/array allocation alignment, counting and mutation-failure contracts passed.

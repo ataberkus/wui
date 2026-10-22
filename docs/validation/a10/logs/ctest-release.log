@@ -1,0 +1,33 @@
+{"command": ["cmd", "/c", "call out\\native-env.cmd && ctest --preset win-d3d11-release -E wui-win32-clipboard --output-on-failure"], "cwd": "C:\\Users\\Valo\\Desktop\\Desktop\\coding\\wui", "exit": 0, "seconds": 4.354}
+**********************************************************************
+** Visual Studio 2022 Developer Command Prompt v17.14.31
+** Copyright (c) 2025 Microsoft Corporation
+**********************************************************************
+[vcvarsall.bat] Environment initialized for: 'x64'
+Test project C:/Users/Valo/Desktop/Desktop/coding/wui/out/win-d3d11-release
+      Start  1: wui-core
+ 1/11 Test  #1: wui-core ............................   Passed    0.06 sec
+      Start  2: wui-text
+ 2/11 Test  #2: wui-text ............................   Passed    0.11 sec
+      Start  3: wui-win32
+ 3/11 Test  #3: wui-win32 ...........................   Passed    0.22 sec
+      Start  4: wui-d3d11
+ 4/11 Test  #4: wui-d3d11 ...........................   Passed    0.41 sec
+      Start  5: wui-contract-release
+ 5/11 Test  #5: wui-contract-release ................   Passed    0.01 sec
+      Start  6: wui-allocation-failure
+ 6/11 Test  #6: wui-allocation-failure ..............   Passed    0.01 sec
+      Start  7: wui-semantic-reuse
+ 7/11 Test  #7: wui-semantic-reuse ..................   Passed    0.01 sec
+      Start  8: wui-allocation-contracts
+ 8/11 Test  #8: wui-allocation-contracts ............   Passed    0.01 sec
+      Start  9: wui-contract-debug
+ 9/11 Test  #9: wui-contract-debug ..................   Passed    0.08 sec
+      Start 10: wui-dependency-checkout
+10/11 Test #10: wui-dependency-checkout .............   Passed    0.79 sec
+      Start 11: wui-dependency-prefix-reconfigure
+11/11 Test #11: wui-dependency-prefix-reconfigure ...   Passed    1.19 sec
+
+100% tests passed, 0 tests failed out of 11
+
+Total Test time (real) =   2.95 sec

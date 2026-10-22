@@ -1,0 +1,94 @@
+# D conformance: per-case differences
+
+Release build (`win-all-release`), 2026-10-03. Each cell is `max channel diff / % of pixels over 8` against the D3D11 WARP reference; `0` means byte-identical RGB. Tolerances: `fixture/*` max <= 2; all other cases <= 0.2% over 8 and max <= 48.
+
+| Case | Size | Scale | d3d11-hardware | d3d10-warp | d3d10-hardware | d3d9-hardware | vulkan-hardware | d3d12-warp | d3d12-hardware |
+|---|---|---|---|---|---|---|---|---|---|
+| `fixture/rev1` | 128x128 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `fixture/rev2` | 128x128 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `fixture/scale2` | 256x256 | 2 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `fixture/fractional-clip` | 192x192 | 1.5 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `fixture/empty` | 64x64 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `fixture/alpha-modes` | 64x32 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `fixture/large-index` | 256x256 | 1 | 2 / 0.000% | 0 | 2 / 0.000% | 2 / 0.000% | 2 / 0.000% | 0 | 2 / 0.000% |
+| `gallery/1280x720-appearance` | 1280x720 | 1 | 2 / 0.000% | 0 | 2 / 0.000% | 2 / 0.000% | 2 / 0.000% | 0 | 2 / 0.000% |
+| `gallery/1280x720-controls` | 1280x720 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `gallery/1280x720-diagnostics` | 1280x720 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `stress/controls100` | 1280x720 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `stress/controls1000` | 1280x720 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `stress/virtual10000` | 1280x720 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-100/normal-checked` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-100/checkbox-hover` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-100/checkbox-pressed` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-100/unchecked` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-100/button-hover` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-100/button-pressed` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-100/checkbox-focus` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-100/button-focus` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-100/disabled-checked` | 640x400 | 1 | 2 / 0.000% | 0 | 2 / 0.000% | 2 / 0.000% | 2 / 0.000% | 0 | 2 / 0.000% |
+| `scenario/scale-100/disabled-unchecked` | 640x400 | 1 | 2 / 0.000% | 0 | 2 / 0.000% | 2 / 0.000% | 2 / 0.000% | 0 | 2 / 0.000% |
+| `scenario/scale-125/normal-checked` | 800x500 | 1.25 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-125/checkbox-hover` | 800x500 | 1.25 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-125/checkbox-pressed` | 800x500 | 1.25 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-125/unchecked` | 800x500 | 1.25 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-125/button-hover` | 800x500 | 1.25 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-125/button-pressed` | 800x500 | 1.25 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-125/checkbox-focus` | 800x500 | 1.25 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-125/button-focus` | 800x500 | 1.25 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-125/disabled-checked` | 800x500 | 1.25 | 2 / 0.000% | 0 | 2 / 0.000% | 2 / 0.000% | 2 / 0.000% | 0 | 2 / 0.000% |
+| `scenario/scale-125/disabled-unchecked` | 800x500 | 1.25 | 2 / 0.000% | 0 | 2 / 0.000% | 2 / 0.000% | 2 / 0.000% | 0 | 2 / 0.000% |
+| `scenario/scale-150/normal-checked` | 960x600 | 1.5 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-150/checkbox-hover` | 960x600 | 1.5 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-150/checkbox-pressed` | 960x600 | 1.5 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-150/unchecked` | 960x600 | 1.5 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-150/button-hover` | 960x600 | 1.5 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-150/button-pressed` | 960x600 | 1.5 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-150/checkbox-focus` | 960x600 | 1.5 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-150/button-focus` | 960x600 | 1.5 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-150/disabled-checked` | 960x600 | 1.5 | 2 / 0.000% | 0 | 2 / 0.000% | 2 / 0.000% | 2 / 0.000% | 0 | 2 / 0.000% |
+| `scenario/scale-150/disabled-unchecked` | 960x600 | 1.5 | 2 / 0.000% | 0 | 2 / 0.000% | 2 / 0.000% | 2 / 0.000% | 0 | 2 / 0.000% |
+| `scenario/scale-200/normal-checked` | 1280x800 | 2 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-200/checkbox-hover` | 1280x800 | 2 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-200/checkbox-pressed` | 1280x800 | 2 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-200/unchecked` | 1280x800 | 2 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-200/button-hover` | 1280x800 | 2 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-200/button-pressed` | 1280x800 | 2 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-200/checkbox-focus` | 1280x800 | 2 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-200/button-focus` | 1280x800 | 2 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scale-200/disabled-checked` | 1280x800 | 2 | 2 / 0.000% | 0 | 2 / 0.000% | 2 / 0.000% | 2 / 0.000% | 0 | 2 / 0.000% |
+| `scenario/scale-200/disabled-unchecked` | 1280x800 | 2 | 2 / 0.000% | 0 | 2 / 0.000% | 2 / 0.000% | 2 / 0.000% | 0 | 2 / 0.000% |
+| `scenario/scenario-01-tabs-hide-show/section-appearance` | 640x400 | 1 | 2 / 0.000% | 0 | 2 / 0.000% | 2 / 0.000% | 2 / 0.000% | 0 | 2 / 0.000% |
+| `scenario/scenario-01-tabs-hide-show/section-diagnostics` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-02-choice-values/missing-value` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-03-dropdown-edges/popup-bottom-edge` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-03-dropdown-edges/popup-top-edge` | 640x240 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-03-dropdown-edges/popup-narrow` | 200x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-04-slider-capture/slider-held` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-05-keyboard/popup-keyboard` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-06-text-editing/text-selection` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-06-text-editing/text-caret` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-07-resize-matrix/matrix-scale-100-800x600` | 800x600 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-07-resize-matrix/matrix-scale-100-1280x720` | 1280x720 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-07-resize-matrix/matrix-scale-100-1920x1080` | 1920x1080 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-07-resize-matrix/matrix-scale-125-800x600` | 800x600 | 1.25 | 2 / 0.000% | 0 | 2 / 0.000% | 2 / 0.000% | 2 / 0.000% | 0 | 2 / 0.000% |
+| `scenario/scenario-07-resize-matrix/matrix-scale-125-1280x720` | 1280x720 | 1.25 | 2 / 0.000% | 0 | 2 / 0.000% | 2 / 0.000% | 2 / 0.000% | 0 | 2 / 0.000% |
+| `scenario/scenario-07-resize-matrix/matrix-scale-125-1920x1080` | 1920x1080 | 1.25 | 2 / 0.000% | 0 | 2 / 0.000% | 2 / 0.000% | 2 / 0.000% | 0 | 2 / 0.000% |
+| `scenario/scenario-07-resize-matrix/matrix-scale-150-800x600` | 800x600 | 1.5 | 2 / 0.000% | 0 | 2 / 0.000% | 2 / 0.000% | 2 / 0.000% | 0 | 2 / 0.000% |
+| `scenario/scenario-07-resize-matrix/matrix-scale-150-1280x720` | 1280x720 | 1.5 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-07-resize-matrix/matrix-scale-150-1920x1080` | 1920x1080 | 1.5 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-07-resize-matrix/matrix-scale-200-800x600` | 800x600 | 2 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-07-resize-matrix/matrix-scale-200-1280x720` | 1280x720 | 2 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-07-resize-matrix/matrix-scale-200-1920x1080` | 1920x1080 | 2 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-08-visual-states/state-normal` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-08-visual-states/state-hover` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-08-visual-states/state-tooltip` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-08-visual-states/state-pressed` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-08-visual-states/state-focused-selected` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-08-visual-states/state-disabled` | 640x400 | 1 | 2 / 0.000% | 0 | 2 / 0.000% | 2 / 0.000% | 2 / 0.000% | 0 | 2 / 0.000% |
+| `scenario/scenario-08-visual-states/state-invalid` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-09-glyph-atlas-recreation/before-glyphs` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-09-glyph-atlas-recreation/after-glyphs` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-10-packets-in-flight/held` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/scenario-10-packets-in-flight/after-growth` | 640x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/resize-during-checkbox-press/320x240` | 320x240 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |
+| `scenario/narrow-checkbox-clipping/narrow-180` | 180x400 | 1 | 1 / 0.000% | 0 | 1 / 0.000% | 1 / 0.000% | 1 / 0.000% | 0 | 1 / 0.000% |

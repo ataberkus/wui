@@ -1,0 +1,9 @@
+#pragma once
+
+// Generated from backends/renderer/d3d12_shaders.hlsl via CMake file(READ)
+// and configure_file. Private to wui_d3d12; never installed.
+namespace wui::d3d12::detail {
+
+inline constexpr char kShaderSource[] = R"WUI_D3D12(@D3D12_SHADER_SOURCE@)WUI_D3D12";
+
+} // namespace wui::d3d12::detail

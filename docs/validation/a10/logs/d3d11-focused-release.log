@@ -1,0 +1,27 @@
+{"command": ["C:\\Users\\Valo\\Desktop\\Desktop\\coding\\wui\\out\\win-d3d11-release\\wui_d3d11_tests.exe"], "cwd": "C:\\Users\\Valo\\Desktop\\Desktop\\coding\\wui", "exit": 0, "seconds": 0.381}
+[doctest] doctest version is "2.5.3"
+[doctest] run with "--help" for options
+===============================================================================
+C:\Users\Valo\Desktop\Desktop\coding\wui\tests\renderers\d3d11_test.cpp(648):
+TEST CASE:  d3d11 retires revisions across packets and recreates devices
+
+C:\Users\Valo\Desktop\Desktop\coding\wui\tests\renderers\d3d11_test.cpp(759): MESSAGE: D3D11 debug layer available
+  logged: D3D11CreateDevice debug WARP hr=0
+
+C:\Users\Valo\Desktop\Desktop\coding\wui\tests\renderers\d3d11_test.cpp(804): MESSAGE: D3D11 info-queue warnings: 0
+  logged: D3D11CreateDevice debug WARP hr=0
+
+===============================================================================
+C:\Users\Valo\Desktop\Desktop\coding\wui\tests\renderers\d3d11_test.cpp(810):
+TEST CASE:  d3d11 evicts retired texture revisions after collect
+
+C:\Users\Valo\Desktop\Desktop\coding\wui\tests\renderers\d3d11_test.cpp(847): MESSAGE: 1 live Texture2D: 2
+  logged: D3D11CreateDevice debug WARP hr=0
+
+C:\Users\Valo\Desktop\Desktop\coding\wui\tests\renderers\d3d11_test.cpp(847): MESSAGE: 1 live Texture2D: 2
+  logged: D3D11CreateDevice debug WARP hr=0
+
+===============================================================================
+[doctest] test cases:   7 |   7 passed | 0 failed | 0 skipped
+[doctest] assertions: 292 | 292 passed | 0 failed |
+[doctest] Status: SUCCESS!

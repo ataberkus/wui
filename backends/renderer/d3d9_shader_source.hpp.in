@@ -1,0 +1,6 @@
+#pragma once
+
+// Generated from d3d9_shaders.hlsl by CMake; private to wui_d3d9.
+namespace wui::d3d9::detail {
+inline constexpr char kShaderSource[] = R"WUI_D3D9(@D3D9_SHADER_SOURCE@)WUI_D3D9";
+} // namespace wui::d3d9::detail

@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "dependencies": [
+    {
+      "name": "freetype",
+      "repository": "https://github.com/freetype/freetype.git",
+      "revision": "0a0221a1347e2f1e07c395263540026e9a0aa7c7",
+      "destination": "third_party/freetype",
+      "version": "2.14.3",
+      "license": "FTL OR GPL-2.0-only"
+    },
+    {
+      "name": "harfbuzz",
+      "repository": "https://github.com/harfbuzz/harfbuzz.git",
+      "revision": "36cb489cb02ce4b92099669ba9f9bea348eff93f",
+      "destination": "third_party/harfbuzz",
+      "version": "14.4.0",
+      "license": "MIT"
+    },
+    {
+      "name": "utf8proc",
+      "repository": "https://github.com/JuliaStrings/utf8proc.git",
+      "revision": "e5e799221b45bbb90f5fdc5c69b6b8dfbf017e78",
+      "destination": "third_party/utf8proc",
+      "version": "2.11.3",
+      "license": "MIT"
+    },
+    {
+      "name": "doctest",
+      "repository": "https://github.com/doctest/doctest.git",
+      "revision": "2d0a9359a60c51affe2a9bebb1be1dca47868151",
+      "destination": "third_party/doctest",
+      "version": "2.5.3",
+      "license": "MIT"
+    }
+  ],
+  "fonts": {
+    "name": "Inter",
+    "version": "4.1",
+    "revision": "e3a3d4c57d5ecc01453a575621882a384c1995a3",
+    "repository": "https://github.com/rsms/inter.git",
+    "archive": "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip",
+    "files": [
+      {
+        "archive_path": "extras/ttf/Inter-Regular.ttf",
+        "destination": "assets/fonts/Inter-Regular.ttf",
+        "sha256": "40d692fce188e4471e2b3cba937be967878f631ad3ebbbdcd587687c7ebe0c82"
+      },
+      {
+        "archive_path": "extras/ttf/Inter-SemiBold.ttf",
+        "destination": "assets/fonts/Inter-SemiBold.ttf",
+        "sha256": "78a843fade9d4612a5567302fb595b56976eb5fcebf4fea5a5912d638bafcde3"
+      },
+      {
+        "archive_path": "LICENSE.txt",
+        "destination": "assets/fonts/LICENSE.txt",
+        "sha256": "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a"
+      }
+    ]
+  }
+}

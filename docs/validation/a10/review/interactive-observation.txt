@@ -1,0 +1,7 @@
+Ordinary Release hardware process launched under hub supervision. HWND class wui.A10.WidgetGallery observed with bounds 182,182,838,621. Actual visible window captured and inspected; existing dark panel, dotted-I text, checkbox and Restore button visible. Own window temporarily raised to avoid unrelated occluding windows, then restored non-topmost. Programmatic WM_CLOSE posted; no manual typing claimed.
+hub wait observed exit=0 after ordinary WM_CLOSE.
+Corrective desktop recheck: Release hardware PID 22228; `computer.window` observed
+title `wui — Widget foundation` at (33,26), bounds 642x432. Native per-window
+screenshot captured the actual 635x430 desktop surface and replaced the earlier
+cropped PNG. AX Close button was pressed; process exited 0. No manual typing
+or mouse interaction was performed.

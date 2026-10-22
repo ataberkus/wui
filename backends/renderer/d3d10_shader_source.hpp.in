@@ -1,0 +1,9 @@
+#pragma once
+
+// Generated from backends/renderer/d3d10_shaders.hlsl via CMake file(READ)
+// and configure_file. Private to wui_d3d10; never installed.
+namespace wui::d3d10::detail {
+
+inline constexpr char kShaderSource[] = R"WUI_D3D10(@D3D10_SHADER_SOURCE@)WUI_D3D10";
+
+} // namespace wui::d3d10::detail

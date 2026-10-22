@@ -1,0 +1,4 @@
+{"command": ["python", "C:\\Users\\Valo\\Desktop\\Desktop\\coding\\wui\\tools\\prepare_dependencies.py", "--verify"], "cwd": "C:\\Users\\Valo\\Desktop\\Desktop\\coding\\wui", "exit": 0, "seconds": 1.036}
+warning: in the working copy of 'src/harfbuzz.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/hb-version.h', LF will be replaced by CRLF the next time Git touches it
+Locked dependencies and Inter assets verified without network access.

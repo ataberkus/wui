@@ -1,0 +1,154 @@
+{
+  "version": 5,
+  "configurePresets": [
+    {
+      "name": "core-debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/core-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "WUI_BUILD_TEXT": "OFF",
+        "WUI_BUILD_WIN32": "OFF",
+        "WUI_BUILD_D3D11": "OFF",
+        "WUI_BUILD_D3D9": "OFF",
+        "WUI_BUILD_VULKAN": "OFF",
+        "WUI_BUILD_D3D10": "OFF",
+        "WUI_BUILD_D3D12": "OFF"
+      }
+    },
+    {
+      "name": "core-text-debug",
+      "inherits": "core-debug",
+      "binaryDir": "${sourceDir}/out/core-text-debug",
+      "cacheVariables": { "WUI_BUILD_TEXT": "ON" }
+    },
+    {
+      "name": "win32-debug",
+      "inherits": "core-debug",
+      "binaryDir": "${sourceDir}/out/win32-debug",
+      "cacheVariables": { "WUI_BUILD_WIN32": "ON" }
+    },
+    {
+      "name": "win32-release",
+      "inherits": "win32-debug",
+      "binaryDir": "${sourceDir}/out/win32-release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "win-d3d11-debug",
+      "inherits": "core-text-debug",
+      "binaryDir": "${sourceDir}/out/win-d3d11-debug",
+      "cacheVariables": { "WUI_BUILD_WIN32": "ON", "WUI_BUILD_D3D11": "ON" }
+    },
+    {
+      "name": "win-d3d11-release",
+      "inherits": "win-d3d11-debug",
+      "binaryDir": "${sourceDir}/out/win-d3d11-release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "win-d3d9-debug",
+      "inherits": "core-text-debug",
+      "binaryDir": "${sourceDir}/out/win-d3d9-debug",
+      "cacheVariables": { "WUI_BUILD_D3D9": "ON" }
+    },
+    {
+      "name": "win-d3d9-release",
+      "inherits": "win-d3d9-debug",
+      "binaryDir": "${sourceDir}/out/win-d3d9-release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "win-d3d10-debug",
+      "inherits": "core-text-debug",
+      "binaryDir": "${sourceDir}/out/win-d3d10-debug",
+      "cacheVariables": { "WUI_BUILD_D3D10": "ON" }
+    },
+    {
+      "name": "win-d3d10-release",
+      "inherits": "win-d3d10-debug",
+      "binaryDir": "${sourceDir}/out/win-d3d10-release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "win-d3d12-debug",
+      "inherits": "core-text-debug",
+      "binaryDir": "${sourceDir}/out/win-d3d12-debug",
+      "cacheVariables": { "WUI_BUILD_D3D12": "ON" }
+    },
+    {
+      "name": "win-d3d12-release",
+      "inherits": "win-d3d12-debug",
+      "binaryDir": "${sourceDir}/out/win-d3d12-release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "win-vulkan-debug",
+      "inherits": "core-text-debug",
+      "binaryDir": "${sourceDir}/out/win-vulkan-debug",
+      "cacheVariables": { "WUI_BUILD_VULKAN": "ON" }
+    },
+    {
+      "name": "win-vulkan-release",
+      "inherits": "win-vulkan-debug",
+      "binaryDir": "${sourceDir}/out/win-vulkan-release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "win-all-debug",
+      "inherits": "core-text-debug",
+      "binaryDir": "${sourceDir}/out/win-all-debug",
+      "cacheVariables": {
+        "WUI_BUILD_WIN32": "ON",
+        "WUI_BUILD_D3D11": "ON",
+        "WUI_BUILD_D3D9": "ON",
+        "WUI_BUILD_VULKAN": "ON",
+        "WUI_BUILD_D3D10": "ON",
+        "WUI_BUILD_D3D12": "ON",
+        "WUI_CONFORMANCE_HARDWARE": "ON"
+      }
+    },
+    {
+      "name": "win-all-release",
+      "inherits": "win-all-debug",
+      "binaryDir": "${sourceDir}/out/win-all-release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "core-debug", "configurePreset": "core-debug" },
+    { "name": "core-text-debug", "configurePreset": "core-text-debug" },
+    { "name": "win32-debug", "configurePreset": "win32-debug" },
+    { "name": "win32-release", "configurePreset": "win32-release" },
+    { "name": "win-d3d11-debug", "configurePreset": "win-d3d11-debug" },
+    { "name": "win-d3d11-release", "configurePreset": "win-d3d11-release" },
+    { "name": "win-d3d9-debug", "configurePreset": "win-d3d9-debug" },
+    { "name": "win-d3d9-release", "configurePreset": "win-d3d9-release" },
+    { "name": "win-d3d10-debug", "configurePreset": "win-d3d10-debug" },
+    { "name": "win-d3d10-release", "configurePreset": "win-d3d10-release" },
+    { "name": "win-d3d12-debug", "configurePreset": "win-d3d12-debug" },
+    { "name": "win-d3d12-release", "configurePreset": "win-d3d12-release" },
+    { "name": "win-vulkan-debug", "configurePreset": "win-vulkan-debug" },
+    { "name": "win-vulkan-release", "configurePreset": "win-vulkan-release" },
+    { "name": "win-all-debug", "configurePreset": "win-all-debug" },
+    { "name": "win-all-release", "configurePreset": "win-all-release" }
+  ],
+  "testPresets": [
+    { "name": "core-debug", "configurePreset": "core-debug", "output": { "outputOnFailure": true } },
+    { "name": "core-text-debug", "configurePreset": "core-text-debug", "output": { "outputOnFailure": true } },
+    { "name": "win32-debug", "configurePreset": "win32-debug", "output": { "outputOnFailure": true } },
+    { "name": "win32-release", "configurePreset": "win32-release", "output": { "outputOnFailure": true } },
+    { "name": "win-d3d11-debug", "configurePreset": "win-d3d11-debug", "output": { "outputOnFailure": true } },
+    { "name": "win-d3d11-release", "configurePreset": "win-d3d11-release", "output": { "outputOnFailure": true } },
+    { "name": "win-d3d9-debug", "configurePreset": "win-d3d9-debug", "output": { "outputOnFailure": true } },
+    { "name": "win-d3d9-release", "configurePreset": "win-d3d9-release", "output": { "outputOnFailure": true } },
+    { "name": "win-d3d10-debug", "configurePreset": "win-d3d10-debug", "output": { "outputOnFailure": true } },
+    { "name": "win-d3d10-release", "configurePreset": "win-d3d10-release", "output": { "outputOnFailure": true } },
+    { "name": "win-d3d12-debug", "configurePreset": "win-d3d12-debug", "output": { "outputOnFailure": true } },
+    { "name": "win-d3d12-release", "configurePreset": "win-d3d12-release", "output": { "outputOnFailure": true } },
+    { "name": "win-vulkan-debug", "configurePreset": "win-vulkan-debug", "output": { "outputOnFailure": true } },
+    { "name": "win-vulkan-release", "configurePreset": "win-vulkan-release", "output": { "outputOnFailure": true } },
+    { "name": "win-all-debug", "configurePreset": "win-all-debug", "output": { "outputOnFailure": true } },
+    { "name": "win-all-release", "configurePreset": "win-all-release", "output": { "outputOnFailure": true } }
+  ]
+}

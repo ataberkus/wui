@@ -1,0 +1,2 @@
+{"command": ["C:\\Users\\Valo\\Desktop\\Desktop\\coding\\wui\\out\\validation\\a\\missing-font-runtime\\wui_widget_gallery.exe", "--driver", "warp", "--validate", "C:\\Users\\Valo\\Desktop\\Desktop\\coding\\wui\\out\\validation\\a\\missing-font-runtime\\result"], "cwd": "C:\\Users\\Valo\\Desktop\\Desktop\\coding\\wui", "exit": 1, "seconds": 0.034}
+error: initialize failed: font load failed: cannot open C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\missing-font-runtime\assets\fonts\Inter-Regular.ttf

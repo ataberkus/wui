@@ -1,0 +1,32 @@
+# Imports the text dependencies installed beside wui, relative to this file.
+# Each installed configuration has lib/wui-deps/<Config>/<name>.lib.
+get_filename_component(_wui_deps_dir "${CMAKE_CURRENT_LIST_DIR}/../../wui-deps" ABSOLUTE)
+foreach(_wui_dep IN ITEMS freetype harfbuzz utf8proc)
+    if(TARGET wui::${_wui_dep})
+        continue()
+    endif()
+    set(_wui_dep_configs)
+    foreach(_wui_dep_config IN ITEMS Debug Release)
+        if(EXISTS "${_wui_deps_dir}/${_wui_dep_config}/${_wui_dep}.lib")
+            list(APPEND _wui_dep_configs ${_wui_dep_config})
+        endif()
+    endforeach()
+    if(NOT _wui_dep_configs)
+        continue()
+    endif()
+    add_library(wui::${_wui_dep} STATIC IMPORTED)
+    foreach(_wui_dep_config IN LISTS _wui_dep_configs)
+        string(TOUPPER "${_wui_dep_config}" _wui_dep_upper)
+        set_property(TARGET wui::${_wui_dep} APPEND PROPERTY IMPORTED_CONFIGURATIONS ${_wui_dep_upper})
+        set_target_properties(wui::${_wui_dep} PROPERTIES
+            IMPORTED_LOCATION_${_wui_dep_upper} "${_wui_deps_dir}/${_wui_dep_config}/${_wui_dep}.lib")
+    endforeach()
+    set_target_properties(wui::${_wui_dep} PROPERTIES
+        MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release
+        MAP_IMPORTED_CONFIG_MINSIZEREL Release)
+endforeach()
+unset(_wui_dep)
+unset(_wui_dep_config)
+unset(_wui_dep_configs)
+unset(_wui_dep_upper)
+unset(_wui_deps_dir)

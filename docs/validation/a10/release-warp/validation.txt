@@ -1,0 +1,364 @@
+a10 validation
+input: programmatic, scoped to application-owned HWNDs; not manual typing evidence
+scale matrix: simulated render/input scales, not OS DPI changes
+captures: 12 successful settling frames before every native pre-Present capture
+manual mouse/keyboard and visual PNG/interactive review: not performed by this command
+driver: Microsoft Basic Render Driver vendor=0x1414 device=0x008C luid=00000000:0000FE39 feature=11_0 debug=yes driver=unavailable driver_hr=0x887A0004
+dpi: mode=per-monitor-v2 scale=1.000
+actual-startup-window-dpi=96 client=640x400
+debug-layer: available errors=0 warnings=0
+BEGIN scale-100/normal
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-100\normal-checked.png scale=1.000000 physical=640x400 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.000000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.000000,608.000000,25.000000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.000000,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=1 selected=1 focused=0 bounds=16.000000,108.000000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,152.000000,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-100/normal notifications=1 restore_count=0
+BEGIN scale-100/mouse-checkbox
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-100\checkbox-hover.png scale=1.000000 physical=640x400 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.000000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.000000,608.000000,25.000000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.000000,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=1 selected=1 focused=0 bounds=16.000000,108.000000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,152.000000,608.000000,36.000000
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-100\checkbox-pressed.png scale=1.000000 physical=640x400 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.000000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.000000,608.000000,25.000000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.000000,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=1 selected=1 focused=1 bounds=16.000000,108.000000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,152.000000,608.000000,36.000000
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-100\unchecked.png scale=1.000000 physical=640x400 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.000000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.000000,608.000000,25.000000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.000000,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=1 selected=0 focused=0 bounds=16.000000,108.000000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,152.000000,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-100/mouse-checkbox notifications=0 restore_count=0
+BEGIN scale-100/mouse-button
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-100\button-hover.png scale=1.000000 physical=640x400 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.000000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.000000,608.000000,25.000000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.000000,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=1 selected=0 focused=0 bounds=16.000000,108.000000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,152.000000,608.000000,36.000000
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-100\button-pressed.png scale=1.000000 physical=640x400 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.000000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.000000,608.000000,25.000000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.000000,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=1 selected=0 focused=0 bounds=16.000000,108.000000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=1 bounds=16.000000,152.000000,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-100/mouse-button notifications=1 restore_count=1
+BEGIN scale-100/keyboard
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-100\checkbox-focus.png scale=1.000000 physical=640x400 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.000000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.000000,608.000000,25.000000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.000000,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=1 selected=1 focused=1 bounds=16.000000,108.000000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,152.000000,608.000000,36.000000
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-100\button-focus.png scale=1.000000 physical=640x400 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.000000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.000000,608.000000,25.000000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.000000,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=1 selected=0 focused=0 bounds=16.000000,108.000000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=1 bounds=16.000000,152.000000,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-100/keyboard notifications=1 restore_count=1
+BEGIN scale-100/disabled-checked.png
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-100\disabled-checked.png scale=1.000000 physical=640x400 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.000000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.000000,608.000000,25.000000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.000000,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=0 selected=1 focused=0 bounds=16.000000,108.000000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=0 selected=0 focused=0 bounds=16.000000,152.000000,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-100/disabled-checked.png notifications=1 restore_count=0
+BEGIN scale-100/disabled-unchecked.png
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-100\disabled-unchecked.png scale=1.000000 physical=640x400 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.000000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.000000,608.000000,25.000000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.000000,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=0 selected=0 focused=0 bounds=16.000000,108.000000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=0 selected=0 focused=0 bounds=16.000000,152.000000,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-100/disabled-unchecked.png notifications=0 restore_count=0
+scale-result=scale-100 PASS prescribed-images=10
+BEGIN scale-125/normal
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-125\normal-checked.png scale=1.250000 physical=800x500 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,205.600006
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.599998,608.000000,25.600000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,83.199997,608.000000,18.400000
+ semantic role=3 label='Notifications' enabled=1 selected=1 focused=0 bounds=16.000000,109.599998,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,153.600006,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-125/normal notifications=1 restore_count=0
+BEGIN scale-125/mouse-checkbox
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-125\checkbox-hover.png scale=1.250000 physical=800x500 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,205.600006
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.599998,608.000000,25.600000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,83.199997,608.000000,18.400000
+ semantic role=3 label='Notifications' enabled=1 selected=1 focused=0 bounds=16.000000,109.599998,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,153.600006,608.000000,36.000000
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-125\checkbox-pressed.png scale=1.250000 physical=800x500 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,205.600006
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.599998,608.000000,25.600000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,83.199997,608.000000,18.400000
+ semantic role=3 label='Notifications' enabled=1 selected=1 focused=1 bounds=16.000000,109.599998,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,153.600006,608.000000,36.000000
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-125\unchecked.png scale=1.250000 physical=800x500 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,205.600006
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.599998,608.000000,25.600000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,83.199997,608.000000,18.400000
+ semantic role=3 label='Notifications' enabled=1 selected=0 focused=0 bounds=16.000000,109.599998,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,153.600006,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-125/mouse-checkbox notifications=0 restore_count=0
+BEGIN scale-125/mouse-button
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-125\button-hover.png scale=1.250000 physical=800x500 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,205.600006
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.599998,608.000000,25.600000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,83.199997,608.000000,18.400000
+ semantic role=3 label='Notifications' enabled=1 selected=0 focused=0 bounds=16.000000,109.599998,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,153.600006,608.000000,36.000000
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-125\button-pressed.png scale=1.250000 physical=800x500 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,205.600006
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.599998,608.000000,25.600000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,83.199997,608.000000,18.400000
+ semantic role=3 label='Notifications' enabled=1 selected=0 focused=0 bounds=16.000000,109.599998,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=1 bounds=16.000000,153.600006,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-125/mouse-button notifications=1 restore_count=1
+BEGIN scale-125/keyboard
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-125\checkbox-focus.png scale=1.250000 physical=800x500 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,205.600006
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.599998,608.000000,25.600000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,83.199997,608.000000,18.400000
+ semantic role=3 label='Notifications' enabled=1 selected=1 focused=1 bounds=16.000000,109.599998,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,153.600006,608.000000,36.000000
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-125\button-focus.png scale=1.250000 physical=800x500 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,205.600006
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.599998,608.000000,25.600000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,83.199997,608.000000,18.400000
+ semantic role=3 label='Notifications' enabled=1 selected=0 focused=0 bounds=16.000000,109.599998,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=1 bounds=16.000000,153.600006,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-125/keyboard notifications=1 restore_count=1
+BEGIN scale-125/disabled-checked.png
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-125\disabled-checked.png scale=1.250000 physical=800x500 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,205.600006
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.599998,608.000000,25.600000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,83.199997,608.000000,18.400000
+ semantic role=3 label='Notifications' enabled=0 selected=1 focused=0 bounds=16.000000,109.599998,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=0 selected=0 focused=0 bounds=16.000000,153.600006,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-125/disabled-checked.png notifications=1 restore_count=0
+BEGIN scale-125/disabled-unchecked.png
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-125\disabled-unchecked.png scale=1.250000 physical=800x500 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,205.600006
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.599998,608.000000,25.600000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,83.199997,608.000000,18.400000
+ semantic role=3 label='Notifications' enabled=0 selected=0 focused=0 bounds=16.000000,109.599998,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=0 selected=0 focused=0 bounds=16.000000,153.600006,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-125/disabled-unchecked.png notifications=0 restore_count=0
+scale-result=scale-125 PASS prescribed-images=10
+BEGIN scale-150/normal
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-150\normal-checked.png scale=1.500000 physical=960x600 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.666672
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.333336,608.000000,25.333334
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.666672,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=1 selected=1 focused=0 bounds=16.000000,108.666672,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,152.666672,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-150/normal notifications=1 restore_count=0
+BEGIN scale-150/mouse-checkbox
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-150\checkbox-hover.png scale=1.500000 physical=960x600 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.666672
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.333336,608.000000,25.333334
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.666672,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=1 selected=1 focused=0 bounds=16.000000,108.666672,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,152.666672,608.000000,36.000000
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-150\checkbox-pressed.png scale=1.500000 physical=960x600 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.666672
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.333336,608.000000,25.333334
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.666672,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=1 selected=1 focused=1 bounds=16.000000,108.666672,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,152.666672,608.000000,36.000000
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-150\unchecked.png scale=1.500000 physical=960x600 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.666672
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.333336,608.000000,25.333334
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.666672,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=1 selected=0 focused=0 bounds=16.000000,108.666672,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,152.666672,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-150/mouse-checkbox notifications=0 restore_count=0
+BEGIN scale-150/mouse-button
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-150\button-hover.png scale=1.500000 physical=960x600 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.666672
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.333336,608.000000,25.333334
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.666672,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=1 selected=0 focused=0 bounds=16.000000,108.666672,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,152.666672,608.000000,36.000000
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-150\button-pressed.png scale=1.500000 physical=960x600 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.666672
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.333336,608.000000,25.333334
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.666672,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=1 selected=0 focused=0 bounds=16.000000,108.666672,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=1 bounds=16.000000,152.666672,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-150/mouse-button notifications=1 restore_count=1
+BEGIN scale-150/keyboard
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-150\checkbox-focus.png scale=1.500000 physical=960x600 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.666672
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.333336,608.000000,25.333334
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.666672,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=1 selected=1 focused=1 bounds=16.000000,108.666672,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,152.666672,608.000000,36.000000
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-150\button-focus.png scale=1.500000 physical=960x600 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.666672
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.333336,608.000000,25.333334
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.666672,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=1 selected=0 focused=0 bounds=16.000000,108.666672,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=1 bounds=16.000000,152.666672,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-150/keyboard notifications=1 restore_count=1
+BEGIN scale-150/disabled-checked.png
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-150\disabled-checked.png scale=1.500000 physical=960x600 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.666672
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.333336,608.000000,25.333334
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.666672,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=0 selected=1 focused=0 bounds=16.000000,108.666672,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=0 selected=0 focused=0 bounds=16.000000,152.666672,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-150/disabled-checked.png notifications=1 restore_count=0
+BEGIN scale-150/disabled-unchecked.png
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-150\disabled-unchecked.png scale=1.500000 physical=960x600 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,204.666672
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.333336,608.000000,25.333334
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.666672,608.000000,18.000000
+ semantic role=3 label='Notifications' enabled=0 selected=0 focused=0 bounds=16.000000,108.666672,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=0 selected=0 focused=0 bounds=16.000000,152.666672,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-150/disabled-unchecked.png notifications=0 restore_count=0
+scale-result=scale-150 PASS prescribed-images=10
+BEGIN scale-200/normal
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-200\normal-checked.png scale=2.000000 physical=1280x800 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,202.500000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,48.500000,608.000000,24.500000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,81.000000,608.000000,17.500000
+ semantic role=3 label='Notifications' enabled=1 selected=1 focused=0 bounds=16.000000,106.500000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,150.500000,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-200/normal notifications=1 restore_count=0
+BEGIN scale-200/mouse-checkbox
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-200\checkbox-hover.png scale=2.000000 physical=1280x800 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,202.500000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,48.500000,608.000000,24.500000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,81.000000,608.000000,17.500000
+ semantic role=3 label='Notifications' enabled=1 selected=1 focused=0 bounds=16.000000,106.500000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,150.500000,608.000000,36.000000
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-200\checkbox-pressed.png scale=2.000000 physical=1280x800 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,202.500000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,48.500000,608.000000,24.500000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,81.000000,608.000000,17.500000
+ semantic role=3 label='Notifications' enabled=1 selected=1 focused=1 bounds=16.000000,106.500000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,150.500000,608.000000,36.000000
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-200\unchecked.png scale=2.000000 physical=1280x800 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,202.500000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,48.500000,608.000000,24.500000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,81.000000,608.000000,17.500000
+ semantic role=3 label='Notifications' enabled=1 selected=0 focused=0 bounds=16.000000,106.500000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,150.500000,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-200/mouse-checkbox notifications=0 restore_count=0
+BEGIN scale-200/mouse-button
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-200\button-hover.png scale=2.000000 physical=1280x800 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,202.500000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,48.500000,608.000000,24.500000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,81.000000,608.000000,17.500000
+ semantic role=3 label='Notifications' enabled=1 selected=0 focused=0 bounds=16.000000,106.500000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,150.500000,608.000000,36.000000
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-200\button-pressed.png scale=2.000000 physical=1280x800 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,202.500000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,48.500000,608.000000,24.500000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,81.000000,608.000000,17.500000
+ semantic role=3 label='Notifications' enabled=1 selected=0 focused=0 bounds=16.000000,106.500000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=1 bounds=16.000000,150.500000,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-200/mouse-button notifications=1 restore_count=1
+BEGIN scale-200/keyboard
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-200\checkbox-focus.png scale=2.000000 physical=1280x800 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,202.500000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,48.500000,608.000000,24.500000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,81.000000,608.000000,17.500000
+ semantic role=3 label='Notifications' enabled=1 selected=1 focused=1 bounds=16.000000,106.500000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,150.500000,608.000000,36.000000
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-200\button-focus.png scale=2.000000 physical=1280x800 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,202.500000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,48.500000,608.000000,24.500000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,81.000000,608.000000,17.500000
+ semantic role=3 label='Notifications' enabled=1 selected=0 focused=0 bounds=16.000000,106.500000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=1 bounds=16.000000,150.500000,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-200/keyboard notifications=1 restore_count=1
+BEGIN scale-200/disabled-checked.png
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-200\disabled-checked.png scale=2.000000 physical=1280x800 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,202.500000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,48.500000,608.000000,24.500000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,81.000000,608.000000,17.500000
+ semantic role=3 label='Notifications' enabled=0 selected=1 focused=0 bounds=16.000000,106.500000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=0 selected=0 focused=0 bounds=16.000000,150.500000,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-200/disabled-checked.png notifications=1 restore_count=0
+BEGIN scale-200/disabled-unchecked.png
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-200\disabled-unchecked.png scale=2.000000 physical=1280x800 notifications=0 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,640.000000,202.500000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,48.500000,608.000000,24.500000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,81.000000,608.000000,17.500000
+ semantic role=3 label='Notifications' enabled=0 selected=0 focused=0 bounds=16.000000,106.500000,608.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=0 selected=0 focused=0 bounds=16.000000,150.500000,608.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS scale-200/disabled-unchecked.png notifications=0 restore_count=0
+scale-result=scale-200 PASS prescribed-images=10
+BEGIN resize-during-checkbox-press
+debug-layer: available errors=0 warnings=0
+PASS resize-during-checkbox-press notifications=1 restore_count=0
+BEGIN narrow-checkbox-clipping
+capture=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-100\narrow-180.png scale=1.000000 physical=180x400 notifications=1 restore_count=0
+ semantic role=0 label='Preferences' enabled=1 selected=0 focused=0 bounds=0.000000,0.000000,180.000000,204.000000
+ semantic role=1 label='Widget foundation' enabled=1 selected=0 focused=0 bounds=16.000000,49.000000,148.000000,25.000000
+ semantic role=1 label='İstanbul — reusable C++ controls' enabled=1 selected=0 focused=0 bounds=16.000000,82.000000,148.000000,18.000000
+ semantic role=3 label='Notifications' enabled=1 selected=1 focused=0 bounds=16.000000,108.000000,148.000000,36.000000
+ semantic role=2 label='Restore defaults' enabled=1 selected=0 focused=0 bounds=16.000000,152.000000,148.000000,36.000000
+debug-layer: available errors=0 warnings=0
+PASS narrow-checkbox-clipping notifications=1 restore_count=0
+BEGIN real-focus-loss-while-captured
+focus-loss: actual SetFocus to RAII-owned same-thread native window; programmatic input
+debug-layer: available errors=0 warnings=0
+PASS real-focus-loss-while-captured notifications=0 restore_count=0
+BEGIN minimize-no-submit-no-present
+minimize: attempted-steps=10 submit-delta=0 present-delta=0 state-preserved
+debug-layer: available errors=0 warnings=0
+PASS minimize-no-submit-no-present notifications=0 restore_count=0
+BEGIN controlled-device-recreation
+controlled-recreation old-device diagnostics:
+debug-layer: available errors=0 warnings=0
+controlled-recreation: quiesced healthy device, retained packet byte-identical on cleared isolated targets; not hardware-removal proof
+debug-layer: available errors=0 warnings=0
+PASS controlled-device-recreation notifications=0 restore_count=1
+BEGIN synthetic-WM_DPICHANGED-message-path
+synthetic-WM_DPICHANGED: actual-dpi=96 suggested/applied=182,182..878,661; message-path check only, no OS DPI change
+debug-layer: available errors=0 warnings=0
+PASS synthetic-WM_DPICHANGED-message-path notifications=0 restore_count=0
+BEGIN real-monitor-DPI-enumeration-and-moves
+monitors: 2
+monitor=0 effective-dpi=96x96 work=0,0..1920,1040
+monitor=1 effective-dpi=96x96 work=1920,0..3840,1040
+cross-monitor-dpi: not exercised (no distinct effective-DPI monitors in current awareness)
+debug-layer: available errors=0 warnings=0
+PASS real-monitor-DPI-enumeration-and-moves notifications=1 restore_count=0
+prescribed-native-images=40 additional-narrow-images=1
+PASS programmatic validation; manual/visual review remains separate

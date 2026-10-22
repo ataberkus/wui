@@ -1,0 +1,32 @@
+a10 measurement
+boundary: UI-thread C++ allocation requests (plain/array/aligned/nothrow new), not direct malloc, other threads, driver allocations or whole-process heap freedom
+cpu scope: actual host Context::begin_frame + build_gallery + Frame::finish only; actual Adapter input drain, renderer/collect and successful swap-chain Present outside count
+GPU timing: unmeasured; Present/readback latency is not GPU timing
+prewarm: all four real Context packet slots retained together then released, outside count
+warmup: 120 actual successfully presented host frames per accepted batch
+samples: 300 actual successfully presented host frames, preallocated storage
+input/resize/DPI/suspension/recreation/model interruptions discard the entire batch and restart four-slot prewarm plus 120-frame warmup (maximum five attempts)
+scales are simulated render/input scales, not changed OS DPI
+full-gallery zero-allocation acceptance remains unproven if any measured counts are nonzero
+build=Release driver=Microsoft Basic Render Driver vendor=0x1414 device=0x008C luid=00000000:0000FE39 feature=11_0 debug=yes driver=unavailable driver_hr=0x887A0004 debug=yes
+BEGIN scale-100 attempt=1
+PASS scale-100 csv=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-100.csv attempt=1 prewarm-slots=4 warmup-presents=120 sampled-presents=300 total-presents=420 scale=1.000000 physical=640x400 build=Release driver=Microsoft Basic Render Driver vendor=0x1414 device=0x008C luid=00000000:0000FE39 feature=11_0 debug=yes driver=unavailable driver_hr=0x887A0004
+ cpp_alloc_calls sum=13200 min=44 max=44 cpp_alloc_bytes sum=3888000 min=12960 max=12960
+ cpu_us min=34.200000 median=36.200000 p95-nearest-rank=40.800000 max=121.300000
+debug-layer: available errors=0 warnings=0
+BEGIN scale-125 attempt=1
+PASS scale-125 csv=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-125.csv attempt=1 prewarm-slots=4 warmup-presents=120 sampled-presents=300 total-presents=420 scale=1.250000 physical=800x500 build=Release driver=Microsoft Basic Render Driver vendor=0x1414 device=0x008C luid=00000000:0000FE39 feature=11_0 debug=yes driver=unavailable driver_hr=0x887A0004
+ cpp_alloc_calls sum=13200 min=44 max=44 cpp_alloc_bytes sum=4027200 min=13424 max=13424
+ cpu_us min=34.800000 median=37.000000 p95-nearest-rank=42.900000 max=114.200000
+debug-layer: available errors=0 warnings=0
+BEGIN scale-150 attempt=1
+PASS scale-150 csv=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-150.csv attempt=1 prewarm-slots=4 warmup-presents=120 sampled-presents=300 total-presents=420 scale=1.500000 physical=960x600 build=Release driver=Microsoft Basic Render Driver vendor=0x1414 device=0x008C luid=00000000:0000FE39 feature=11_0 debug=yes driver=unavailable driver_hr=0x887A0004
+ cpp_alloc_calls sum=13200 min=44 max=44 cpp_alloc_bytes sum=4027200 min=13424 max=13424
+ cpu_us min=36.500000 median=39.100000 p95-nearest-rank=49.500000 max=77.700000
+debug-layer: available errors=0 warnings=0
+BEGIN scale-200 attempt=1
+PASS scale-200 csv=C:\Users\Valo\Desktop\Desktop\coding\wui\out\validation\a\corrective\release-warp\scale-200.csv attempt=1 prewarm-slots=4 warmup-presents=120 sampled-presents=300 total-presents=420 scale=2.000000 physical=1280x800 build=Release driver=Microsoft Basic Render Driver vendor=0x1414 device=0x008C luid=00000000:0000FE39 feature=11_0 debug=yes driver=unavailable driver_hr=0x887A0004
+ cpp_alloc_calls sum=13200 min=44 max=44 cpp_alloc_bytes sum=4658400 min=15528 max=15528
+ cpu_us min=40.300000 median=42.900000 p95-nearest-rank=54.000000 max=188.500000
+debug-layer: available errors=0 warnings=0
+PASS measurement
