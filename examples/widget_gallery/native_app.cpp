@@ -645,7 +645,9 @@ Status NativeApp::create_device_resources(Driver driver) {
     swap.OutputWindow = impl.window;
     swap.SampleDesc.Count = 1;
     swap.Windowed = TRUE;
-    swap.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+    // Flip model: the legacy blt DISCARD effect presents a white window on some
+    // current drivers (and WARP).
+    swap.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG;
     HRESULT hr = D3D11CreateDeviceAndSwapChain(nullptr, type, nullptr, flags, levels, 1,
         D3D11_SDK_VERSION, &swap, impl.swapchain.GetAddressOf(), impl.device.GetAddressOf(),
