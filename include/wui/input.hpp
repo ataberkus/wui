@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <span>
+#include <utility>
 
 namespace wui {
 namespace detail { struct FrameState; }
@@ -85,6 +86,11 @@ public:
     void end();
     DragResult drag(Id id, Rect bounds, bool enabled);
     template<class F> void edit(Id id, bool enabled, F&& on_event);
+    // Delivers the focused widget's keyboard, text and composition events as
+    // edit() does, for a widget that routes its pointer through drag() under
+    // the same id. Call it before drag(); it neither claims the id nor joins
+    // the focus order (drag() does both).
+    template<class F> void keyboard(Id id, F&& on_event);
     Id focused() const;
     Id captured() const;
     // Every event routed this frame, in order (deferred keyboard input
@@ -151,13 +157,16 @@ template<class F> void Interaction::edit(Id id, bool enabled, F&& on_event) {
         return;
     }
     current_order_.push_back(id);
-    const bool focused = focus_ == id;
+    keyboard(id, std::forward<F>(on_event));
+}
+template<class F> void Interaction::keyboard(Id id, F&& on_event) {
+    if (!active_ || id == Id{} || blocked() || focus_ != id) return;
     for (auto& record : events_) {
         if (record.consumed) continue;
         const auto kind = record.event.kind;
         if (kind != EventKind::key_down && kind != EventKind::key_up &&
             kind != EventKind::text && kind != EventKind::composition) continue;
-        if (focused && (record.activation == Id{} || record.activation == focus_)) {
+        if (record.activation == Id{} || record.activation == focus_) {
             on_event(record.event);
             record.consumed = true;
             if (kind == EventKind::key_down &&

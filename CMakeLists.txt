@@ -50,6 +50,8 @@ add_library(wui_core STATIC
     src/widgets/tooltip.cpp
     src/widgets/slider.cpp
     src/widgets/text_input.cpp
+    src/widgets/text_area.cpp
+    src/widgets/data_grid.cpp
     src/widgets/numeric_input.cpp
     src/widgets/dropdown.cpp
     src/widgets/button.cpp

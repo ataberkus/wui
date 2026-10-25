@@ -1559,7 +1559,9 @@ void CanvasAccess::sync_focus(Canvas& canvas, Id focused) {
         if (semantic.role == Role::button || semantic.role == Role::checkbox ||
             semantic.role == Role::tab || semantic.role == Role::radio ||
             semantic.role == Role::dropdown || semantic.role == Role::slider ||
-            semantic.role == Role::text_input || semantic.role == Role::numeric_input) {
+            semantic.role == Role::text_input || semantic.role == Role::numeric_input ||
+            semantic.role == Role::text_area || semantic.role == Role::grid ||
+            semantic.role == Role::grid_header) {
             semantic.focused = focused.value != 0 && semantic.enabled &&
                                semantic.id == focused;
         }

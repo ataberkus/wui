@@ -33,8 +33,9 @@ struct Batch {
     Rect clip;
 };
 
+// Later enumerators were appended; earlier values are stable.
 enum class Role { panel, text, button, checkbox, tab, radio, dropdown, tooltip, validation,
-                  slider, text_input, numeric_input };
+                  slider, text_input, numeric_input, text_area, grid, grid_header, grid_row };
 
 struct Semantic {
     Id id;

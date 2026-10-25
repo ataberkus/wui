@@ -24,6 +24,13 @@ private:
 inline bool visible(Rect bounds) {
     return bounds.w > 0.0f && bounds.h > 0.0f;
 }
+// Left offset of a line `width` wide placed in `room` (never negative, so an
+// overflowing line keeps its start visible).
+inline float align_offset(Align align, float room, float width) {
+    const float slack = std::max(0.0f, room - width);
+    if (align == Align::center) return slack * 0.5f;
+    return align == Align::end ? slack : 0.0f;
+}
 inline Theme widget_theme(FrameState& frame, const WidgetOptions& options) {
     Theme theme = frame.theme;
     for (const auto& scope : frame.style_stack) apply_style(theme, scope);

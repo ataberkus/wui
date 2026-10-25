@@ -35,7 +35,9 @@ DPI input.
 - **A useful widget set.** Panels, rows/columns, scroll areas with
   virtualized fixed-height rows, text, headings and descriptions, buttons,
   icon buttons, checkboxes, radio groups, tabs, dropdowns, sliders, UTF-8 text
-  input with clipboard and IME, numeric input (`double`/`float`/`int`),
+  input with clipboard and IME, a wrapping multi-line text area, a data grid
+  with sortable, resizable columns and virtualized rows, numeric input
+  (`double`/`float`/`int`), start/center/end text alignment,
   tooltips, inline validation, popups and overlays, scoped styles, and custom
   painting through `Canvas`.
 - **Zero allocations in the warmed gallery.** The fixed widget gallery made

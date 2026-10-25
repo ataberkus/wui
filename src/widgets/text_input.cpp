@@ -7,9 +7,8 @@
 #include <variant>
 
 namespace wui::detail {
-namespace {
 
-std::vector<std::size_t> editor_boundaries(FrameState& frame, std::string_view text) {
+std::vector<std::size_t> edit_boundaries(FrameState& frame, std::string_view text) {
     auto result = frame.text->grapheme_offsets(text);
     if (auto* failed = std::get_if<Error>(&result)) {
         frame.report(std::move(*failed));
@@ -29,18 +28,7 @@ std::vector<std::size_t> editor_boundaries(FrameState& frame, std::string_view t
     return offsets;
 }
 
-std::size_t step_before(const std::vector<std::size_t>& offsets, std::size_t caret) {
-    const auto it = std::lower_bound(offsets.begin(), offsets.end(), caret);
-    if (it == offsets.begin()) return 0;
-    return *(it - 1);
-}
-
-std::size_t step_after(const std::vector<std::size_t>& offsets, std::size_t caret) {
-    const auto it = std::upper_bound(offsets.begin(), offsets.end(), caret);
-    return it == offsets.end() ? offsets.back() : *it;
-}
-
-bool snapshot_undo(FrameState& frame, EditState& editor) {
+bool snapshot_edit_undo(FrameState& frame, EditState& editor) {
     const std::size_t bytes = editor.draft.size();
     if (!frame.account_edit_bytes(bytes)) return false;
     if (editor.undo.size() == 64 || editor.undo_bytes + bytes > 64 * 1024) {
@@ -54,19 +42,31 @@ bool snapshot_undo(FrameState& frame, EditState& editor) {
     return true;
 }
 
-void insert_at_selection(EditState& editor, std::string_view insert) {
+void replace_edit_selection(EditState& editor, std::string_view insert) {
     const auto from = std::min(editor.caret, editor.anchor);
     const auto to = std::max(editor.caret, editor.anchor);
     editor.draft.replace(from, to - from, insert.data(), insert.size());
     editor.caret = editor.anchor = from + insert.size();
 }
 
+namespace {
+
+std::size_t step_before(const std::vector<std::size_t>& offsets, std::size_t caret) {
+    const auto it = std::lower_bound(offsets.begin(), offsets.end(), caret);
+    if (it == offsets.begin()) return 0;
+    return *(it - 1);
+}
+
+std::size_t step_after(const std::vector<std::size_t>& offsets, std::size_t caret) {
+    const auto it = std::upper_bound(offsets.begin(), offsets.end(), caret);
+    return it == offsets.end() ? offsets.back() : *it;
+}
 } // namespace
 
 bool process_edit_event(FrameState& frame, EditState& editor, const wui::InputEvent& event) {
     if (event.kind == wui::EventKind::text) {
-        if (!snapshot_undo(frame, editor)) return false;
-        insert_at_selection(editor, event.text);
+        if (!snapshot_edit_undo(frame, editor)) return false;
+        replace_edit_selection(editor, event.text);
         return true;
     }
     if (event.kind == wui::EventKind::composition) {
@@ -90,9 +90,9 @@ bool process_edit_event(FrameState& frame, EditState& editor, const wui::InputEv
                 frame.note_diagnostic(failed->code, failed->message.c_str());
                 return false;
             }
-            if (!snapshot_undo(frame, editor)) return false;
+            if (!snapshot_edit_undo(frame, editor)) return false;
             const auto& text = std::get<std::string>(pasted);
-            insert_at_selection(editor, {text.data(), text.size()});
+            replace_edit_selection(editor, {text.data(), text.size()});
             return true;
         }
         if (from == to) return false;
@@ -105,8 +105,8 @@ bool process_edit_event(FrameState& frame, EditState& editor, const wui::InputEv
             return false;
         }
         if (event.key == Key::x) {
-            if (!snapshot_undo(frame, editor)) return false;
-            insert_at_selection(editor, {});
+            if (!snapshot_edit_undo(frame, editor)) return false;
+            replace_edit_selection(editor, {});
             return true;
         }
         return false;
@@ -117,13 +117,13 @@ bool process_edit_event(FrameState& frame, EditState& editor, const wui::InputEv
     };
     switch (event.key) {
     case Key::left: {
-        auto offsets = editor_boundaries(frame, {editor.draft.data(), editor.draft.size()});
+        auto offsets = edit_boundaries(frame, {editor.draft.data(), editor.draft.size()});
         if (frame.error) return false;
         move(step_before(offsets, editor.caret));
         return false;
     }
     case Key::right: {
-        auto offsets = editor_boundaries(frame, {editor.draft.data(), editor.draft.size()});
+        auto offsets = edit_boundaries(frame, {editor.draft.data(), editor.draft.size()});
         if (frame.error) return false;
         move(step_after(offsets, editor.caret));
         return false;
@@ -133,16 +133,16 @@ bool process_edit_event(FrameState& frame, EditState& editor, const wui::InputEv
     case Key::backspace:
     case Key::del: {
         if (editor.caret != editor.anchor) {
-            if (!snapshot_undo(frame, editor)) return false;
-            insert_at_selection(editor, {});
+            if (!snapshot_edit_undo(frame, editor)) return false;
+            replace_edit_selection(editor, {});
             return true;
         }
-        auto offsets = editor_boundaries(frame, {editor.draft.data(), editor.draft.size()});
+        auto offsets = edit_boundaries(frame, {editor.draft.data(), editor.draft.size()});
         if (frame.error) return false;
         const std::size_t next = event.key == Key::backspace
             ? step_before(offsets, editor.caret) : step_after(offsets, editor.caret);
         if (next == editor.caret) return false;
-        if (!snapshot_undo(frame, editor)) return false;
+        if (!snapshot_edit_undo(frame, editor)) return false;
         const auto from = std::min(next, editor.caret);
         editor.draft.erase(from, std::max(next, editor.caret) - from);
         editor.caret = editor.anchor = from;

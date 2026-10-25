@@ -436,3 +436,44 @@ TEST_CASE("run cache evicts the least recently used unheld run first") {
     REQUIRE_FALSE(recent.expired());
     CHECK(f.shape("lru recent") == recent.lock());
 }
+
+TEST_CASE("text and button labels honour start center and end alignment") {
+    Fixture f;
+    const auto run = f.shape("Wx");
+    REQUIRE_FALSE(run->glyphs.empty());
+    const float bearing = run->glyphs.front().bounds.x;
+    auto created = wui::Context::create({wui::Theme::dark(), f.textures, f.service});
+    REQUIRE(std::holds_alternative<std::unique_ptr<wui::Context>>(created));
+    auto context = std::get<std::unique_ptr<wui::Context>>(std::move(created));
+    auto begun = context->begin_frame({{0, 0, 200, 300}});
+    REQUIRE(std::holds_alternative<wui::Frame>(begun));
+    auto frame = std::get<wui::Frame>(std::move(begun));
+    const wui::Color start{1, 0, 0, 1}, center{0, 1, 0, 1}, end{0, 0, 1, 1}, label{1, 0, 1, 1};
+    frame.text("Wx", {.color = start});
+    frame.text("Wx", {.color = center, .align = wui::Align::center});
+    frame.text("Wx", {.color = end, .align = wui::Align::end});
+    frame.text("Wx", {.color = end, .wrap = true, .align = wui::Align::end});
+    CHECK_FALSE(frame.button("left", "Wx", {.style = {.text = label}, .label_align = wui::Align::start}));
+    auto finished = frame.finish();
+    REQUIRE(std::holds_alternative<wui::DrawPacket>(finished));
+    const auto packet = std::get<wui::DrawPacket>(std::move(finished));
+    REQUIRE_FALSE(wui::validate_packet(*packet).has_value());
+    // Leftmost vertex of the glyphs painted in one exact color, per text row.
+    const auto left = [&](wui::Color color, float row_y) {
+        float x = 1e9f;
+        for (const auto& vertex : packet->vertices) {
+            const auto c = vertex.premultiplied;
+            if (c.r == color.r && c.g == color.g && c.b == color.b &&
+                vertex.position.y >= row_y && vertex.position.y < row_y + 36)
+                x = std::min(x, vertex.position.x);
+        }
+        return x;
+    };
+    const auto row = [&](std::size_t index) { return packet->semantics[index].bounds.y; };
+    REQUIRE(packet->semantics.size() == 5);
+    CHECK(left(start, row(0)) == doctest::Approx(bearing));
+    CHECK(left(center, row(1)) == doctest::Approx((200 - run->width) * 0.5f + bearing));
+    CHECK(left(end, row(2)) == doctest::Approx(200 - run->width + bearing));
+    CHECK(left(end, row(3)) == doctest::Approx(200 - run->width + bearing));
+    CHECK(left(label, row(4)) == doctest::Approx(wui::Theme::dark().gap + bearing));
+}

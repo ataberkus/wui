@@ -27,7 +27,8 @@ FrameState::FrameState(ContextDesc desc)
       max_widgets(desc.max_widgets), max_retained_bytes(desc.max_retained_bytes),
       memory(max_retained_bytes), widgets(&memory), stack(&memory),
       row_rects(&memory), rows(&memory), wrap_lines(&memory), style_stack(&memory), areas(&memory),
-      choice_columns(&memory), diagnostics(&memory), overlays(&memory), edits(&memory) {}
+      choice_columns(&memory), diagnostics(&memory), overlays(&memory), edits(&memory),
+      grids(&memory) {}
 
 void FrameState::report(ErrorCode code, const char* message, bool contract) noexcept {
     if (error) return;
@@ -88,6 +89,18 @@ void FrameState::prune_edits() noexcept {
         }
         it = edits.erase(it);
     }
+    // Grid state of a widget pruned above goes with it.
+    for (auto it = grids.begin(); it != grids.end();) {
+        if (widgets.contains(it->first)) ++it;
+        else it = grids.erase(it);
+    }
+}
+GridState* FrameState::grid_state(Id id) {
+    if (error) return nullptr;
+    auto found = grids.find(id.value);
+    if (found == grids.end())
+        found = grids.try_emplace(id.value, GridState{std::pmr::vector<float>{&memory}}).first;
+    return &found->second;
 }
 WidgetState* FrameState::register_widget(Id id) {
     if (error) return nullptr;
@@ -132,7 +145,8 @@ EditState* FrameState::edit_state(Id id) {
             return nullptr;
         }
         EditState state{std::pmr::string{&memory}, std::pmr::string{&memory},
-                        std::pmr::string{&memory}, std::pmr::vector<EditSnapshot>{&memory}};
+                        std::pmr::string{&memory}, std::pmr::vector<EditSnapshot>{&memory},
+                        std::pmr::vector<EditLine>{&memory}};
         found = edits.try_emplace(id.value, std::move(state)).first;
     }
     return &found->second;

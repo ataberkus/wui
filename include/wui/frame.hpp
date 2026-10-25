@@ -13,6 +13,7 @@
 #include <optional>
 #include <span>
 #include <string_view>
+#include <string>
 #include <type_traits>
 
 namespace wui {
@@ -20,12 +21,14 @@ namespace detail { struct FrameState; }
 class Context;
 class Canvas;
 // role/size select the face and logical pixel size (size 0: theme size for
-// the role; display defaults to the heading size).
+// the role; display defaults to the heading size). align places each line
+// within the row width; a line wider than the row starts at its left edge.
 struct TextOptions {
     std::optional<Color> color;
     bool wrap = false;
     FontRole role = FontRole::body;
     float size = 0;
+    Align align = Align::start;
 };
 struct CustomItem {
     Id id;
@@ -41,8 +44,33 @@ struct WidgetOptions {
     Variant variant = Variant::normal;
     StyleOverride style;
     bool invalid = false;
-    // text_input / numeric_input: hint painted while the draft is empty.
+    // text_input / numeric_input / text_area: hint painted while the draft is
+    // empty; data_grid: hint painted while it has no rows.
     std::string_view placeholder;
+    // button: label placement inside the padded control (other widgets ignore it).
+    Align label_align = Align::center;
+};
+enum class SortDirection { none, ascending, descending };
+struct GridColumn {
+    std::string_view title;
+    float width = 120;    // initial width; user resizing is retained per grid
+    float min_width = 32;
+    bool sortable = true;
+};
+// The caller sorts its rows; data_grid only reports header clicks here.
+struct GridSort {
+    std::size_t column = 0;
+    SortDirection direction = SortDirection::none;
+};
+struct GridResult {
+    bool selection_changed = false, sort_changed = false, activated = false;
+};
+// Cell text for one visible cell. A provider that builds a new string stores
+// it in `scratch` and returns a view of it; the view is used before the next call.
+struct GridCells {
+    void* context = nullptr;
+    std::string_view (*text)(void* context, std::size_t row, std::size_t column,
+                             std::string& scratch) = nullptr;
 };
 // Placement and behaviour of Frame::popup. Non-modal popups open below the
 // anchor (above when that fits better), are clamped into the viewport, and
@@ -207,6 +235,29 @@ public:
                 int min, int max, WidgetOptions options = {});
     bool text_input(std::string_view key, std::string_view label, std::string& value,
                     WidgetOptions options = {});
+    // Multi-line editor with word wrap and internal vertical scrolling. Enter
+    // inserts '\n'; Up/Down/Page Up/Page Down move by visual line, Home/End to
+    // the visual line edges (Ctrl: whole text); the pointer places the caret
+    // and drag selects. Pasted CRLF/CR become '\n'. `height` is the box height
+    // in logical pixels; 0 fits four body lines.
+    bool text_area(std::string_view key, std::string_view label, std::string& value,
+                   float height = 0, WidgetOptions options = {});
+    // Table with a header row and `rows` virtualized rows in a box `height`
+    // tall. Header clicks (or Enter/Space on a focused header) toggle `sort`;
+    // dragging a header's right edge resizes that column. Click and
+    // Up/Down/Home/End/Page Up/Page Down select a row, Enter activates it,
+    // Left/Right and horizontal wheel scroll columns. `cell(row, column)` is
+    // called only for visible cells and returns text (string, string_view or
+    // const char*).
+    GridResult data_grid(std::string_view key, std::string_view label,
+                         std::span<const GridColumn> columns, std::size_t rows, GridCells cells,
+                         std::optional<std::size_t>& selected, GridSort& sort, float height,
+                         WidgetOptions options = {});
+    template<class Cell>
+    GridResult data_grid(std::string_view key, std::string_view label,
+                         std::span<const GridColumn> columns, std::size_t rows, Cell&& cell,
+                         std::optional<std::size_t>& selected, GridSort& sort, float height,
+                         WidgetOptions options = {});
     bool numeric_input(std::string_view key, std::string_view label, double& value,
                        double min, double max, WidgetOptions options = {});
     bool numeric_input(std::string_view key, std::string_view label, float& value,
@@ -337,6 +388,28 @@ bool Frame::dropdown(std::string_view key, std::string_view label, T& selected,
                      WidgetOptions widget_options) {
     return choose(key, label, selected, options, ChoiceKind::dropdown,
                   Orientation::vertical, widget_options);
+}
+
+template<class Cell>
+GridResult Frame::data_grid(std::string_view key, std::string_view label,
+                            std::span<const GridColumn> columns, std::size_t rows, Cell&& cell,
+                            std::optional<std::size_t>& selected, GridSort& sort, float height,
+                            WidgetOptions options) {
+    using Provider = std::remove_reference_t<Cell>;
+    const GridCells cells{
+        const_cast<void*>(static_cast<const void*>(std::addressof(cell))),
+        [](void* context, std::size_t row, std::size_t column, std::string& scratch) -> std::string_view {
+            auto& provider = *static_cast<Provider*>(context);
+            using R = std::invoke_result_t<Provider&, std::size_t, std::size_t>;
+            if constexpr (std::is_reference_v<R> || std::is_convertible_v<R, const char*> ||
+                          std::is_same_v<std::remove_cv_t<R>, std::string_view>) {
+                return std::string_view(provider(row, column));
+            } else {
+                scratch = provider(row, column);
+                return scratch;
+            }
+        }};
+    return data_grid(key, label, columns, rows, cells, selected, sort, height, options);
 }
 
 template<class T>

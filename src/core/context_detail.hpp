@@ -35,6 +35,7 @@ struct WidgetState {
     float measured_height = 0; // last closed popup content height
     float hsv[3]{};            // color picker: hue/saturation/value kept across
     bool hsv_valid = false;    // achromatic edits, refreshed on external changes
+    bool dragging = false;     // text_area: pointer captured on the previous frame
 };
 struct Container {
     Id id;
@@ -69,12 +70,28 @@ struct EditSnapshot {
     std::pmr::string text;
     std::size_t caret = 0, anchor = 0;
 };
+// One visual line of a multi-line editor: byte range in the draft, excluding
+// the hard line break that may follow it.
+struct EditLine {
+    std::size_t begin = 0, end = 0;
+};
 struct EditState {
     std::pmr::string draft, composition, last_published;
     std::pmr::vector<EditSnapshot> undo;
+    std::pmr::vector<EditLine> lines; // text_area wrap layout of draft
     std::size_t undo_bytes = 0, caret = 0, anchor = 0;
     std::uint64_t last_present = 0;
     bool composition_active = false;
+    float layout_width = -1;  // width `lines` were wrapped at; < 0 means stale
+    float preferred_x = -1;   // caret column kept across vertical moves
+    std::optional<Vec2> caret_point; // painted caret bottom, for IME placement
+};
+// data_grid: user-sized column widths and in-progress gestures.
+struct GridState {
+    std::pmr::vector<float> widths;
+    float scroll_x = 0;
+    float grab = 0;                        // pointer x minus width at resize press
+    std::size_t resizing = static_cast<std::size_t>(-1);
 };
 enum class OverlayKind { popup_option, tooltip };
 struct OverlayPaint {
@@ -102,6 +119,8 @@ struct FrameState {
     RetainedMemory memory;
     std::pmr::unordered_map<std::uint64_t, WidgetState> widgets;
     std::pmr::unordered_map<std::uint64_t, EditState> edits;
+    std::pmr::unordered_map<std::uint64_t, GridState> grids;
+    std::string grid_scratch; // data_grid cell text built by the provider
     std::pmr::vector<Container> stack;
     std::pmr::vector<Rect> row_rects;
     std::pmr::vector<RowState> rows;
@@ -174,6 +193,8 @@ struct FrameState {
     EditState* edit_state(Id id);
     bool account_edit_bytes(std::size_t bytes);
     void prune_edits() noexcept;
+    GridState* grid_state(Id id);
+    bool input_blocked() const { return interaction.blocked(); }
     void note_diagnostic(ErrorCode code, std::string_view message);
     bool edit_text_model(Id id, std::string& value, bool focused, bool enabled);
     std::string_view edit_display(Id id);
@@ -208,6 +229,7 @@ inline std::optional<Vec2> focused_text_caret(const FrameState& frame) {
     const auto editor = frame.edits.find(focused.value);
     if (widget == frame.widgets.end() || editor == frame.edits.end()) return std::nullopt;
     if (!widget->second.enabled) return std::nullopt;
+    if (editor->second.caret_point) return editor->second.caret_point;
     const Rect bounds = widget->second.bounds;
     return Vec2{bounds.x + bounds.w * 0.5f, bounds.y + bounds.h};
 }
@@ -225,6 +247,18 @@ bool emit_slider(FrameState&, std::string_view key, std::string_view label,
                  int&, int min, int max, WidgetOptions);
 bool emit_text_edit(FrameState&, std::string_view key, std::string_view label,
                     std::string&, WidgetOptions);
+bool emit_text_area(FrameState&, std::string_view key, std::string_view label,
+                    std::string&, float height, WidgetOptions);
+GridResult emit_data_grid(FrameState&, std::string_view key, std::string_view label,
+                          std::span<const GridColumn>, std::size_t rows, GridCells,
+                          std::optional<std::size_t>& selected, GridSort&, float height,
+                          WidgetOptions);
+// Shared editing primitives: record an undo step (false when the retained
+// byte limit refuses it) and replace the selection with `insert`.
+bool snapshot_edit_undo(FrameState&, EditState&);
+void replace_edit_selection(EditState&, std::string_view insert);
+// Validated grapheme boundaries of `text` (0 ... size); empty after an error.
+std::vector<std::size_t> edit_boundaries(FrameState&, std::string_view text);
 // Applies one focused editing event to the draft; true when the draft changed.
 bool process_edit_event(FrameState&, EditState&, const InputEvent&);
 template<class T>

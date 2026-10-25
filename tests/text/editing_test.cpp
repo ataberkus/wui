@@ -518,3 +518,163 @@ TEST_CASE("finite numeric input commits on Enter and cancels on Escape") {
         CHECK(semantic(settled_packet, wui::Role::numeric_input, "Amount").value == "1.25");
     }
 }
+
+TEST_CASE("text area edits lines, moves by visual line, pastes line breaks and follows the caret") {
+    auto textures = std::make_shared<wui::TextureStore>(64 * 1024 * 1024);
+    auto clipboard = std::make_shared<FakeClipboard>();
+    auto context = make_context(textures, real_text(textures), clipboard);
+    std::string value;
+    float height = 120;
+    wui::Rect bounds{};
+    const auto step = [&](std::vector<wui::InputEvent> events, float width = 400) {
+        wui::FrameInput input{{0, 0, width, 300}};
+        input.events = std::move(events);
+        auto frame = begin(*context, input);
+        const bool changed = frame.text_area("notes", "Notes", value, height);
+        const auto packet = finish(frame);
+        const auto& area = semantic(packet, wui::Role::text_area, "Notes");
+        CHECK(area.value == value);
+        bounds = area.bounds;
+        return changed;
+    };
+    const auto down = [](wui::Key key, bool shift = false, bool control = false) {
+        return key_event(wui::EventKind::key_down, key, shift, control);
+    };
+    CHECK_FALSE(step({}));
+    CHECK(bounds.h == 120);
+    CHECK(step({down(wui::Key::tab), text_event("abc"), down(wui::Key::enter), text_event("abc")}));
+    CHECK(value == "abc\nabc");
+
+    // Up keeps the caret column; Ctrl+Home/End reach the whole text's edges.
+    CHECK(step({down(wui::Key::left), down(wui::Key::up), text_event("|")}));
+    CHECK(value == "ab|c\nabc");
+    CHECK(step({down(wui::Key::home, false, true), text_event("<"), down(wui::Key::end, false, true),
+                text_event(">")}));
+    CHECK(value == "<ab|c\nabc>");
+    CHECK(step({down(wui::Key::up), down(wui::Key::end), text_event("!")}));
+    CHECK(value == "<ab|c!\nabc>");
+
+    // Pasted CRLF and CR become '\n'.
+    clipboard->contents = "x\r\ny\rz";
+    CHECK(step({down(wui::Key::end, false, true), down(wui::Key::v, false, true)}));
+    CHECK(value == "<ab|c!\nabc>x\ny\nz");
+
+    // A press places the caret; dragging across the first line selects it.
+    value = "abc\nabc";
+    CHECK_FALSE(step({}));
+    const float line_y = bounds.y + 8 + 4;
+    CHECK(step({{wui::EventKind::pointer_down, {bounds.x + 9, line_y}},
+                {wui::EventKind::pointer_move, {bounds.x + bounds.w - 12, line_y}},
+                {wui::EventKind::pointer_up, {bounds.x + bounds.w - 12, line_y}}}) == false);
+    CHECK(step({text_event("Z")}));
+    CHECK(value == "Z\nabc");
+
+    // In a narrow box End stops at the visual line, before the hanging space.
+    value = "alpha beta gamma delta epsilon zeta eta theta iota kappa";
+    CHECK_FALSE(step({}, 160));
+    CHECK(step({down(wui::Key::home, false, true), down(wui::Key::end), text_event("|")}, 160));
+    const auto mark = value.find('|');
+    REQUIRE(mark != std::string::npos);
+    CHECK(mark < 20);
+    CHECK(value[mark + 1] == ' ');
+
+    // Twenty lines in a short box: the caret's line scrolls into view.
+    height = 80;
+    value.clear();
+    for (int i = 0; i < 20; ++i) value += "line " + std::to_string(i) + "\n";
+    CHECK_FALSE(step({}));
+    CHECK_FALSE(step({down(wui::Key::home, false, true)}));
+    CHECK_FALSE(step({down(wui::Key::end, false, true)}));
+    const auto caret = context->composition_caret();
+    REQUIRE(caret.has_value());
+    CHECK(caret->y > bounds.y);
+    CHECK(caret->y <= bounds.y + bounds.h);
+    CHECK_FALSE(step({down(wui::Key::page_up), down(wui::Key::home, false, true)}));
+    const auto top = context->composition_caret();
+    REQUIRE(top.has_value());
+    CHECK(top->y < bounds.y + 8 + 30);
+}
+
+TEST_CASE("data grid virtualizes rows, selects by pointer and keys, sorts and resizes columns") {
+    auto textures = std::make_shared<wui::TextureStore>(64 * 1024 * 1024);
+    auto context = make_context(textures, real_text(textures));
+    const std::array<wui::GridColumn, 3> columns{{{"A", 120}, {"B", 120}, {"C", 120, 32, false}}};
+    std::optional<std::size_t> selected;
+    wui::GridSort sort;
+    std::size_t calls = 0;
+    const auto cell = [&](std::size_t row, std::size_t column) {
+        ++calls;
+        return "r" + std::to_string(row) + "c" + std::to_string(column);
+    };
+    wui::Rect grid{};
+    std::vector<wui::Semantic> semantics;
+    const auto step = [&](std::vector<wui::InputEvent> events) {
+        wui::FrameInput input{{0, 0, 400, 300}};
+        input.events = std::move(events);
+        auto frame = begin(*context, input);
+        calls = 0;
+        const auto result = frame.data_grid("entries", "Entries", columns, 100, cell, selected, sort, 200);
+        const auto packet = finish(frame);
+        grid = semantic(packet, wui::Role::grid, "Entries").bounds;
+        semantics = packet->semantics;
+        return result;
+    };
+    const auto rows = [&] {
+        std::vector<std::string> labels;
+        for (const auto& item : semantics)
+            if (item.role == wui::Role::grid_row) labels.push_back(item.label);
+        return labels;
+    };
+    const auto header = [&](std::string_view title) {
+        const auto found = std::find_if(semantics.begin(), semantics.end(), [&](const wui::Semantic& item) {
+            return item.role == wui::Role::grid_header && item.label == title;
+        });
+        REQUIRE(found != semantics.end());
+        return *found;
+    };
+    const auto click = [](wui::Vec2 at) {
+        return std::vector<wui::InputEvent>{{wui::EventKind::pointer_down, at}, {wui::EventKind::pointer_up, at}};
+    };
+    const auto down = [](wui::Key key) { return key_event(wui::EventKind::key_down, key); };
+
+    step({});
+    const auto visible = rows();
+    REQUIRE_FALSE(visible.empty());
+    CHECK(visible.size() < 12);
+    CHECK(visible.front() == "r0c0");
+    CHECK(calls < 60); // only visible cells are queried
+    const float row_height = header("A").bounds.h;
+
+    auto result = step(click({grid.x + 20, grid.y + row_height * 2.5f}));
+    CHECK(result.selection_changed);
+    CHECK(selected == 1u);
+    CHECK(step({down(wui::Key::down)}).selection_changed);
+    CHECK(selected == 2u);
+    step({down(wui::Key::end)});
+    CHECK(selected == 99u);
+    CHECK(rows().back() == "r99c0");
+    step({down(wui::Key::page_up)});
+    CHECK(selected < 99u);
+    step({down(wui::Key::home)});
+    CHECK(selected == 0u);
+    CHECK(rows().front() == "r0c0");
+    CHECK(step({down(wui::Key::enter)}).activated);
+
+    const auto b = header("B").bounds;
+    CHECK(step(click({b.x + 30, b.y + b.h * 0.5f})).sort_changed);
+    CHECK((sort.column == 1 && sort.direction == wui::SortDirection::ascending));
+    CHECK(step(click({b.x + 30, b.y + b.h * 0.5f})).sort_changed);
+    CHECK(sort.direction == wui::SortDirection::descending);
+    CHECK(header("B").value == "descending");
+    CHECK_FALSE(step(click({header("C").bounds.x + 30, b.y + b.h * 0.5f})).sort_changed);
+
+    // Dragging A's right edge widens A and shifts B without sorting.
+    const float edge = header("A").bounds.x + header("A").bounds.w;
+    result = step({{wui::EventKind::pointer_down, {edge, b.y + 4}},
+                   {wui::EventKind::pointer_move, {edge + 40, b.y + 4}},
+                   {wui::EventKind::pointer_up, {edge + 40, b.y + 4}}});
+    CHECK_FALSE(result.sort_changed);
+    step({});
+    CHECK(header("B").bounds.x == doctest::Approx(b.x + 40));
+    CHECK(sort.direction == wui::SortDirection::descending);
+}

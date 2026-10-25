@@ -7,6 +7,8 @@ namespace wui {
 
 enum class Density { comfortable, compact };
 enum class Variant { normal, prominent, quiet };
+// Horizontal placement of a line within its row (start = left).
+enum class Align { start, center, end };
 struct StyleOverride {
     std::optional<Color> control, text, accent, focus;
     // In a Frame::style scope, disables every widget emitted inside it (as if

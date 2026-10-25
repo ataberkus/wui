@@ -32,7 +32,7 @@ bool emit_button(FrameState& frame, std::string_view key, std::string_view label
             const Rect content{row.x + padding, row.y, row.w - 2.0f * padding, row.h};
             WidgetClip label_clip(frame, content);
             if (frame.check_canvas()) {
-                const float x = content.x + std::max(0.0f, (content.w - run->width) * 0.5f);
+                const float x = content.x + align_offset(options.label_align, content.w, run->width);
                 frame.glyphs(*run, {x, row.y + (row.h - run->height) * 0.5f},
                              options.enabled ? theme.text : theme.secondary);
             }

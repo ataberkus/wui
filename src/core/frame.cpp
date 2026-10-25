@@ -175,6 +175,30 @@ bool Frame::text_input(std::string_view key, std::string_view label, std::string
       catch (const std::length_error&) { state_->report(ErrorCode::capacity, "Text input exceeds container limits"); }
     return state_->text_model_changed;
 }
+bool Frame::text_area(std::string_view key, std::string_view label, std::string& value,
+                      float height, WidgetOptions options) {
+    if (!state_) { (void)missing_frame(); return false; }
+    state_->text_model_changed = false;
+    try {
+        return state_->usable(generation_) &&
+               detail::emit_text_area(*state_, key, label, value, height, state_->effective(options));
+    } catch (const std::bad_alloc&) { state_->report(ErrorCode::capacity, "Text area allocation failed"); }
+      catch (const std::length_error&) { state_->report(ErrorCode::capacity, "Text area exceeds container limits"); }
+    return state_->text_model_changed;
+}
+GridResult Frame::data_grid(std::string_view key, std::string_view label,
+                            std::span<const GridColumn> columns, std::size_t rows, GridCells cells,
+                            std::optional<std::size_t>& selected, GridSort& sort, float height,
+                            WidgetOptions options) {
+    if (!state_) { (void)missing_frame(); return {}; }
+    try {
+        if (state_->usable(generation_))
+            return detail::emit_data_grid(*state_, key, label, columns, rows, cells, selected, sort, height,
+                                          state_->effective(options));
+    } catch (const std::bad_alloc&) { state_->report(ErrorCode::capacity, "Data grid allocation failed"); }
+      catch (const std::length_error&) { state_->report(ErrorCode::capacity, "Data grid exceeds container limits"); }
+    return {};
+}
 bool Frame::numeric_input(std::string_view key, std::string_view label, double& value,
                           double min, double max, WidgetOptions options) {
     if (!state_) { (void)missing_frame(); return false; }

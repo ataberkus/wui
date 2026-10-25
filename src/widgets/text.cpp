@@ -32,7 +32,7 @@ void emit_text(FrameState& frame, std::string_view value, FontRole role,
         {
             WidgetClip clip(frame, intersect(row, frame.clip()));
             if (!frame.check_canvas()) return;
-            frame.glyphs(*run, {row.x, row.y}, color);
+            frame.glyphs(*run, {row.x + align_offset(options.align, row.w, run->width), row.y}, color);
             if (frame.check_canvas())
                 frame.canvas.semantic(id, validation ? Role::validation : Role::text,
                                       value, row, !validation, false, false, {}, validation);
@@ -123,7 +123,7 @@ void emit_text(FrameState& frame, std::string_view value, FontRole role,
         if (!frame.check_canvas()) return;
         float y = row.y;
         for (const auto& line : frame.wrap_lines) {
-            frame.glyphs(*line, {row.x, y}, color);
+            frame.glyphs(*line, {row.x + align_offset(options.align, row.w, line->width), y}, color);
             if (!frame.check_canvas()) return;
             y += line->height;
         }
