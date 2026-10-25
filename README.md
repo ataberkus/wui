@@ -85,6 +85,16 @@ Inter font hashes. `--build` installs the libraries to `out/deps/<Config>`.
 `--verify` checks the staged revisions again without network access. The
 `core-debug` and `win32-*` presets do not need these dependencies.
 
+The dependency build is trimmed to what wui's text module can reach, which
+keeps the size a consumer executable gains small. FreeType keeps only the
+TrueType/CFF (SFNT) drivers and the anti-aliased renderer
+([`cmake/freetype_ftmodule.h`](cmake/freetype_ftmodule.h)). HarfBuzz drops
+APIs wui never calls. On Windows, Release dependencies are size-optimized
+(`/O1 /Gw`) and Debug dependencies use `/O1` with the debug CRT, so you cannot
+usefully step through FreeType or HarfBuzz code in a debugger. Fonts that are
+not SFNT, such as Windows `.fon`, are still rejected with `invalid_font`, but
+FreeType now reports that it cannot open them.
+
 ## Build
 
 Each preset in [`CMakePresets.json`](CMakePresets.json) builds into

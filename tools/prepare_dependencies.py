@@ -167,17 +167,57 @@ def build_dependencies(lock: dict, config: str, names: list[str] | None) -> None
 
     prefix = ROOT / "out" / "deps" / config
 
-    def cmake_dependency(name: str, options: list[str]) -> None:
+    # Release dependencies are optimized for size: they are linked statically
+    # into every consumer executable, and text shaping/rasterization is not a
+    # hot loop (runs and glyphs are cached by wui_text).
+    cmake_build_type = "MinSizeRel" if config == "Release" else config
+    hb_build_options = (["--buildtype", "minsize", "-Ddebug=false", "-Db_ndebug=true"]
+        if config == "Release" else ["--buildtype", config.lower()])
+    # HarfBuzz features wui_text cannot reach: it shapes horizontally with the
+    # "ot" shaper through hb_ot_font funcs and calls none of these APIs. HB_LEAN
+    # is not used: its HB_NO_HINTING, HB_NO_VAR, HB_NO_GETENV, HB_NO_METRICS
+    # and HB_NO_BITMAP change shaping results for some fonts.
+    hb_cpp_args = ["-D" + name for name in (
+        "HB_DISABLE_DEPRECATED", "HB_NO_BUFFER_MESSAGE", "HB_NO_BUFFER_SERIALIZE",
+        "HB_NO_BUFFER_VERIFY", "HB_NO_ERRNO", "HB_NO_FACE_COLLECT_UNICODES",
+        "HB_NO_FALLBACK_SHAPE", "HB_NO_LAYOUT_COLLECT_GLYPHS", "HB_NO_LAYOUT_FEATURE_PARAMS",
+        "HB_NO_LAYOUT_RARELY_USED", "HB_NO_LAYOUT_UNUSED", "HB_NO_MATH", "HB_NO_META",
+        "HB_NO_MMAP", "HB_NO_NAME", "HB_NO_OPEN", "HB_NO_OT_FETCH", "HB_NO_OT_FONT_GLYPH_NAMES",
+        "HB_NO_SETLOCALE", "HB_NO_VERTICAL")]
+    # /Gw puts each global in its own COMDAT so /OPT:REF drops unused tables.
+    cmake_size_options = ["-DCMAKE_C_FLAGS_MINSIZEREL=/O1 /Ob1 /DNDEBUG /Gw"]
+    if os.name == "nt" and config == "Release":
+        hb_build_options.append("-Dc_args=/Gw")
+        hb_cpp_args.append("/Gw")
+    elif os.name == "nt":
+        # Debug consumers still get the debug CRT, symbols and FreeType tracing;
+        # only the third-party code itself is optimized.
+        cmake_size_options = ["-DCMAKE_C_FLAGS_DEBUG=/Zi /O1 /Ob1"]
+        hb_build_options.append("-Doptimization=s")
+    else:
+        cmake_size_options = []
+    hb_build_options.append("-Dcpp_args=" + " ".join(hb_cpp_args))
+
+    def cmake_dependency(name: str, options: list[str], clean_first: bool = False) -> None:
         build = ROOT / "out" / "deps-build" / config / name
         run(["cmake", "-S", ROOT / "third_party" / name, "-B", build, "-G", "Ninja",
-             f"-DCMAKE_BUILD_TYPE={config}", f"-DCMAKE_INSTALL_PREFIX={prefix}",
+             f"-DCMAKE_BUILD_TYPE={cmake_build_type}", f"-DCMAKE_INSTALL_PREFIX={prefix}",
              "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>DLL",
-             "-DBUILD_SHARED_LIBS=OFF", *options])
-        run(["cmake", "--build", build, "--parallel", "4"])
+             "-DBUILD_SHARED_LIBS=OFF", *cmake_size_options, *options])
+        run(["cmake", "--build", build, "--parallel", "4", *(["--clean-first"] if clean_first else [])])
         run(["cmake", "--install", build])
 
+    # The build tree's include directory precedes the source tree's, so this
+    # replaces FreeType's default module list (see the header for the rationale).
+    # Trees compiled before the override tracked the source header, so rebuild them.
+    ft_modules = ROOT / "out" / "deps-build" / config / "freetype" / "include" / "freetype" / "config" / "ftmodule.h"
+    ft_modules_source = ROOT / "cmake" / "freetype_ftmodule.h"
+    ft_modules_changed = not ft_modules.is_file() or ft_modules.read_bytes() != ft_modules_source.read_bytes()
+    ft_modules.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(ft_modules_source, ft_modules)
     cmake_dependency("freetype", ["-DFT_DISABLE_HARFBUZZ=ON", "-DFT_DISABLE_ZLIB=ON",
-        "-DFT_DISABLE_BZIP2=ON", "-DFT_DISABLE_PNG=ON", "-DFT_DISABLE_BROTLI=ON"])
+        "-DFT_DISABLE_BZIP2=ON", "-DFT_DISABLE_PNG=ON", "-DFT_DISABLE_BROTLI=ON"],
+        clean_first=ft_modules_changed)
     hb_build = ROOT / "out" / "deps-build" / config / "harfbuzz"
     hb_source = ROOT / "third_party" / "harfbuzz"
     hb_flags = ["-Dauto_features=disabled", "-Dtests=disabled", "-Dutilities=disabled",
@@ -187,11 +227,11 @@ def build_dependencies(lock: dict, config: str, names: list[str] | None) -> None
         hb_flags.append("-Db_vscrt=mdd" if config == "Debug" else "-Db_vscrt=md")
     if ensure_meson_metadata(hb_build, hb_source, config):
         run(["meson", "setup", "--reconfigure", hb_build, hb_source, "--prefix", prefix,
-             "--buildtype", config.lower(), "--default-library", "static",
+             *hb_build_options, "--default-library", "static",
              "--wrap-mode=nofallback", *hb_flags])
     else:
         run(["meson", "setup", hb_build, hb_source, "--prefix", prefix,
-             "--buildtype", config.lower(), "--default-library", "static",
+             *hb_build_options, "--default-library", "static",
              "--wrap-mode=nofallback", *hb_flags])
         write_meson_metadata(hb_build, hb_source, config)
     run(["meson", "compile", "-C", hb_build, "-j", "4"])
