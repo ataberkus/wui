@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -786,14 +787,18 @@ struct Canvas::Impl {
     }
 
     // Shapes write their geometry straight into the retained packet buffers
-    // rather than building it in scratch storage and copying it over:
-    // begin_mesh() checks the frame and guarantees capacity for the exact
-    // vertex and index counts (so the shape's push_backs never reallocate),
-    // the shape pushes vertices and base-offset indices, and end_mesh()
-    // records the new index range as a batch or extends the previous one.
+    // rather than building it in scratch storage and copying it over.
+    // begin_mesh() checks the frame, grows the packet's vertex and index
+    // arrays by exactly the requested counts and returns write cursors into
+    // the new tails; the shape must fill every slot (indices offset by
+    // `base`) and then call end_mesh() with the final cursors, which records
+    // the new index range as a batch or extends the previous one. Writing
+    // through cursors avoids a capacity check per element.
     struct Mesh {
-        std::uint32_t base = 0;        // packet index of the mesh's first vertex
-        std::uint32_t first_index = 0; // packet index of the mesh's first index
+        Vertex* vertex = nullptr;       // next vertex slot to write
+        std::uint32_t* index = nullptr; // next index slot to write
+        std::uint32_t base = 0;         // packet index of the mesh's first vertex
+        std::uint32_t first_index = 0;  // packet index of the mesh's first index
     };
 
     template <typename T>
@@ -815,47 +820,56 @@ struct Canvas::Impl {
             fail({ErrorCode::capacity, "Canvas geometry exceeds packet limits"});
             return std::nullopt;
         }
+        const auto base = vertices.size();
+        const auto first_index = indices.size();
         reserve_more(vertices, vertex_count);
         reserve_more(indices, index_count);
-        return Mesh{static_cast<std::uint32_t>(vertices.size()),
-                    static_cast<std::uint32_t>(indices.size())};
+        // Within reserved capacity resize cannot throw, so a failed
+        // reservation above leaves the packet untouched.
+        vertices.resize(base + vertex_count);
+        indices.resize(first_index + index_count);
+        return Mesh{vertices.data() + base, indices.data() + first_index,
+                    static_cast<std::uint32_t>(base), static_cast<std::uint32_t>(first_index)};
     }
 
-    void end_mesh(Mesh mesh, TextureHandle texture) {
-        const auto index_count =
-            static_cast<std::uint32_t>(current->indices.size() - mesh.first_index);
+    // `filled` is the mesh with its cursors advanced past the written slots.
+    void end_mesh(const Mesh& filled, TextureHandle texture) {
+        auto& indices = current->indices;
+        assert(filled.vertex == current->vertices.data() + current->vertices.size() &&
+               filled.index == indices.data() + indices.size() &&
+               "a shape must write every vertex and index slot it requested");
+        const auto index_count = static_cast<std::uint32_t>(indices.size() - filled.first_index);
         auto& batches = current->batches;
         if (!merge_barrier && !batches.empty() &&
             pending_batches.back().texture == texture &&
             equal(batches.back().clip, clips.back()) &&
-            batches.back().first_index + batches.back().index_count == mesh.first_index) {
+            batches.back().first_index + batches.back().index_count == filled.first_index) {
             batches.back().index_count += index_count;
         } else {
-            batches.push_back({mesh.first_index, index_count, 0, 0, clips.back()});
+            batches.push_back({filled.first_index, index_count, 0, 0, clips.back()});
             pending_batches.push_back({texture});
         }
         merge_barrier = false;
     }
 
     template <std::size_t N>
-    static void push_indices(std::vector<std::uint32_t>& indices,
-                             const std::array<std::uint32_t, N>& values) {
+    static void put(std::uint32_t*& cursor, const std::array<std::uint32_t, N>& values) {
         for (const auto value : values) {
-            indices.push_back(value);
+            *cursor++ = value;
         }
     }
 
     // Two triangles over four corners given in winding order.
     void quad_unchecked(const std::array<Vertex, 4>& corners, TextureHandle texture) {
-        const auto mesh = begin_mesh(4, 6);
+        auto mesh = begin_mesh(4, 6);
         if (!mesh) {
             return;
         }
         for (const auto& corner : corners) {
-            current->vertices.push_back(corner);
+            *mesh->vertex++ = corner;
         }
         const auto b = mesh->base;
-        push_indices(current->indices, std::array{b, b + 1, b + 2, b, b + 2, b + 3});
+        put(mesh->index, std::array{b, b + 1, b + 2, b, b + 2, b + 3});
         end_mesh(*mesh, texture);
     }
 
@@ -884,36 +898,37 @@ struct Canvas::Impl {
         const auto count = static_cast<std::uint32_t>(points.size());
         const std::size_t interior_count =
             interior.empty() ? (points.size() - 2) * 3 : interior.size();
-        const auto mesh =
+        auto mesh =
             begin_mesh(points.size() + outer.size(), interior_count + points.size() * 6);
         if (!mesh) {
             return;
         }
         const auto inner_color = premultiply(color);
-        auto& vertices = current->vertices;
-        auto& indices = current->indices;
+        Vertex* vertex = mesh->vertex;
         for (const auto point : points) {
-            vertices.push_back({point, {0.5f, 0.5f}, inner_color});
+            *vertex++ = {point, {0.5f, 0.5f}, inner_color};
         }
         for (const auto point : outer) {
-            vertices.push_back({point, {0.5f, 0.5f}, {0, 0, 0, 0}});
+            *vertex++ = {point, {0.5f, 0.5f}, {0, 0, 0, 0}};
         }
+        mesh->vertex = vertex;
+        std::uint32_t* index = mesh->index;
         const auto b = mesh->base;
         if (interior.empty()) {
             for (std::uint32_t i = 1; i + 1 < count; ++i) {
-                push_indices(indices, std::array{b, b + i, b + i + 1});
+                put(index, std::array{b, b + i, b + i + 1});
             }
         } else {
-            for (const auto index : interior) {
-                indices.push_back(b + index);
+            for (const auto local : interior) {
+                *index++ = b + local;
             }
         }
         const auto o = b + count; // first outer (fringe) vertex
         for (std::uint32_t i = 0; i < count; ++i) {
             const auto next = i + 1 == count ? 0 : i + 1;
-            push_indices(indices, std::array{b + i, o + next, b + next,
-                                             b + i, o + i, o + next});
+            put(index, std::array{b + i, o + next, b + next, b + i, o + i, o + next});
         }
+        mesh->index = index;
         end_mesh(*mesh, *white);
     }
 
@@ -1145,10 +1160,8 @@ void Canvas::gradient(Rect bounds, Color top_left, Color top_right,
         return Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
                      a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t};
     };
-    const auto mesh = impl_->begin_mesh((cells + 1) * (cells + 1), cells * cells * 6);
+    auto mesh = impl_->begin_mesh((cells + 1) * (cells + 1), cells * cells * 6);
     if (!mesh) return;
-    auto& vertices = impl_->current->vertices;
-    auto& indices = impl_->current->indices;
     for (std::uint32_t y = 0; y <= cells; ++y) {
         const float v = static_cast<float>(y) / cells;
         const Color left = lerp(corners[0], corners[3], v);
@@ -1158,7 +1171,7 @@ void Canvas::gradient(Rect bounds, Color top_left, Color top_right,
         for (std::uint32_t x = 0; x <= cells; ++x) {
             const float u = static_cast<float>(x) / cells;
             const float px = x == cells ? bounds.x + bounds.w : bounds.x + bounds.w * u;
-            vertices.push_back({{px, py}, {0.5f, 0.5f}, lerp(left, right, u)});
+            *mesh->vertex++ = {{px, py}, {0.5f, 0.5f}, lerp(left, right, u)};
         }
     }
     for (std::uint32_t y = 0; y < cells; ++y) {
@@ -1167,7 +1180,7 @@ void Canvas::gradient(Rect bounds, Color top_left, Color top_right,
             const std::uint32_t b = a + 1;
             const std::uint32_t c = a + cells + 2;
             const std::uint32_t d = a + cells + 1;
-            Impl::push_indices(indices, std::array{a, b, c, a, c, d});
+            Impl::put(mesh->index, std::array{a, b, c, a, c, d});
         }
     }
     impl_->end_mesh(*mesh, *impl_->white);
@@ -1194,13 +1207,11 @@ void Canvas::border(Rect bounds, float radius, float width, Color color) {
     rounded_outline(bounds, outer_radius, impl_->current->scale, outer);
     fringe_outline(outer, 1.0f / impl_->current->scale, fringe);
     const auto count = static_cast<std::uint32_t>(outer.size());
-    const auto mesh = impl_->begin_mesh(std::size_t{count} * 3, std::size_t{count} * 12);
+    auto mesh = impl_->begin_mesh(std::size_t{count} * 3, std::size_t{count} * 12);
     if (!mesh) return;
-    auto& vertices = impl_->current->vertices;
-    auto& indices = impl_->current->indices;
     const Color fill = premultiply(color);
     for (const auto point : outer)
-        vertices.push_back({point, {0.5f, 0.5f}, fill});
+        *mesh->vertex++ = {point, {0.5f, 0.5f}, fill};
     const float middle_x = bounds.x + bounds.w * 0.5f;
     const float middle_y = bounds.y + bounds.h * 0.5f;
     for (const auto point : outer) {
@@ -1215,21 +1226,21 @@ void Canvas::border(Rect bounds, float radius, float width, Color color) {
         const float inner_y = (top ? inner.y : inner.y + inner.h) +
                               (top ? inner_radius : -inner_radius);
         const float ratio = outer_radius > 0 ? inner_radius / outer_radius : 0;
-        vertices.push_back({{inner_x + (point.x - center_x) * ratio,
-                             inner_y + (point.y - center_y) * ratio},
-                            {0.5f, 0.5f}, fill});
+        *mesh->vertex++ = {{inner_x + (point.x - center_x) * ratio,
+                            inner_y + (point.y - center_y) * ratio},
+                           {0.5f, 0.5f}, fill};
     }
     for (const auto point : fringe)
-        vertices.push_back({point, {0.5f, 0.5f}, {0, 0, 0, 0}});
+        *mesh->vertex++ = {point, {0.5f, 0.5f}, {0, 0, 0, 0}};
     // Rings of `count` vertices each: outer edge, inner edge, outer fringe.
     const auto o = mesh->base;
     const auto n = o + count;
     const auto f = o + count * 2;
     for (std::uint32_t i = 0; i < count; ++i) {
         const auto next = i + 1 == count ? 0 : i + 1;
-        Impl::push_indices(indices, std::array{o + i, o + next, n + next, o + i, n + next, n + i,
-                                               o + i, f + next, o + next,
-                                               o + i, f + i, f + next});
+        Impl::put(mesh->index, std::array{o + i, o + next, n + next, o + i, n + next, n + i,
+                                          o + i, f + next, o + next,
+                                          o + i, f + i, f + next});
     }
     impl_->end_mesh(*mesh, *impl_->white);
 }
