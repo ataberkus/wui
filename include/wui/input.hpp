@@ -3,6 +3,7 @@
 #include <wui/id.hpp>
 #include <wui/types.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
