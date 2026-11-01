@@ -6,6 +6,7 @@
 #include <limits>
 #include <memory_resource>
 #include <new>
+#include <string>
 #include <vector>
 
 #include <wui/layout.hpp>
@@ -140,4 +141,38 @@ TEST_CASE("visible rows return a bounded half-open range and reject invalid exte
         REQUIRE(std::holds_alternative<wui::Error>(result));
         CHECK(std::get<wui::Error>(result).code == wui::ErrorCode::invalid_argument);
     }
+}
+
+TEST_CASE("refused flow rows report the precise error and leave the flow unchanged") {
+    const auto infinity = std::numeric_limits<float>::infinity();
+    const auto nan = std::numeric_limits<float>::quiet_NaN();
+    const auto message = [](wui::Result<wui::Rect> result) {
+        REQUIRE(std::holds_alternative<wui::Error>(result));
+        return std::get<wui::Error>(result).message;
+    };
+    const std::string invalid = "flow dimensions and gap must be finite and nonnegative";
+    const std::string overflow = "flow dimensions overflow";
+
+    wui::Flow flow({0, 3e38f, 10, 10}, 4);
+    CHECK(message(flow.take(-1)) == invalid);
+    CHECK(message(flow.take(nan)) == invalid);
+    CHECK(message(flow.take(infinity)) == invalid);
+    CHECK(message(flow.take(3e38f)) == overflow); // y + height exceeds float range
+    CHECK(flow.used_height() == 0);
+    wui::Rect row{};
+    CHECK_FALSE(wui::detail::FlowAccess::take(flow, 3e38f, row));
+    CHECK_FALSE(wui::detail::FlowAccess::take(flow, infinity, row));
+    CHECK_FALSE(wui::detail::FlowAccess::take(flow, nan, row));
+
+    // Refusals did not advance the flow: the first accepted row has no gap.
+    REQUIRE(wui::detail::FlowAccess::take(flow, 2, row));
+    CHECK(row.y == 3e38f);
+    CHECK(row.h == 2);
+    const auto next = std::get<wui::Rect>(flow.take(1));
+    CHECK(next.y == 3e38f + 6.0f);
+    CHECK(flow.used_height() == 7);
+
+    wui::Flow broken({0, 0, 10, 10}, nan);
+    CHECK(message(broken.take(1)) == invalid);
+    CHECK_FALSE(wui::detail::FlowAccess::take(broken, 1, row));
 }

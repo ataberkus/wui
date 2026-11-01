@@ -1,4 +1,5 @@
 #include "context_detail.hpp"
+#include "../layout/flow_detail.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -193,7 +194,11 @@ void FrameState::note_diagnostic(ErrorCode code, std::string_view message) {
 }
 Rect FrameState::take(float height) {
     if (error) return {};
-    auto result = stack.back().flow.take(height);
+    auto& flow = stack.back().flow;
+    Rect row;
+    if (FlowAccess::take(flow, height, row)) return row;
+    // A refused take leaves the flow unchanged; the checked call says why.
+    auto result = flow.take(height);
     if (auto* failed = std::get_if<Error>(&result)) {
         report(failed->code, failed->message.c_str(), true);
         return {};

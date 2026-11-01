@@ -98,23 +98,33 @@ Flow::Flow(Rect area, float gap)
       valid_(valid_area(area) && std::isfinite(gap) && gap >= 0.0f) {}
 
 Result<Rect> Flow::take(float height) {
+    Rect row;
+    if (detail::FlowAccess::take(*this, height, row)) return row;
     if (!valid_ || !std::isfinite(height) || height < 0.0f) {
         return invalid_layout("flow dimensions and gap must be finite and nonnegative");
     }
-
-    const float row_gap = has_rows_ ? gap_ : 0.0f;
-    const float y_offset = used_height_ + row_gap;
-    const float next_used_height = y_offset + height;
-    const float y = area_.y + y_offset;
-    if (!std::isfinite(y_offset) || !std::isfinite(next_used_height) ||
-        !std::isfinite(y) || !std::isfinite(y + height)) {
-        return invalid_layout("flow dimensions overflow");
-    }
-
-    used_height_ = next_used_height;
-    has_rows_ = true;
-    return Rect{area_.x, y, area_.w, height};
+    return invalid_layout("flow dimensions overflow");
 }
+
+namespace detail {
+bool FlowAccess::take(Flow& flow, float height, Rect& out) noexcept {
+    // NaN and negative heights stop here; an infinite one fails the sum test.
+    if (!flow.valid_ || !(height >= 0.0f)) return false;
+
+    const float row_gap = flow.has_rows_ ? flow.gap_ : 0.0f;
+    const float y_offset = flow.used_height_ + row_gap;
+    const float next_used_height = y_offset + height;
+    const float y = flow.area_.y + y_offset;
+    // An IEEE sum is finite only when both operands are, so these two tests
+    // also prove y_offset, y and height finite.
+    if (!std::isfinite(next_used_height) || !std::isfinite(y + height)) return false;
+
+    flow.used_height_ = next_used_height;
+    flow.has_rows_ = true;
+    out = Rect{flow.area_.x, y, flow.area_.w, height};
+    return true;
+}
+} // namespace detail
 
 float Flow::used_height() const {
     return used_height_;
