@@ -170,7 +170,7 @@ double signed_area(std::span<const Vec2> points) {
     double area = 0.0;
     const auto origin = points.front();
     for (std::size_t i = 0; i < points.size(); ++i) {
-        const auto j = (i + 1) % points.size();
+        const auto j = i + 1 == points.size() ? 0 : i + 1;
         area += (static_cast<double>(points[i].x) - origin.x) *
                     (static_cast<double>(points[j].y) - origin.y) -
                 (static_cast<double>(points[i].y) - origin.y) *
@@ -400,16 +400,21 @@ bool simple_outline(std::span<const Vec2> points) {
 void fringe_outline(std::span<const Vec2> points, float fringe, std::vector<Vec2>& out) {
     const float orientation = signed_area(points) > 0 ? 1.0f : -1.0f;
     out.clear();
+    if (points.empty()) {
+        return;
+    }
     out.reserve(points.size());
+    const auto edge_normal = [orientation](Vec2 from, Vec2 to) {
+        const auto edge = normalized(subtract(to, from));
+        return multiply(Vec2{edge.y, -edge.x}, orientation);
+    };
+    // Each edge normal serves the corners at both of its ends: the outgoing
+    // normal of one corner is carried over as the incoming one of the next.
+    auto previous_normal = edge_normal(points.back(), points.front());
     for (std::size_t i = 0; i < points.size(); ++i) {
-        const auto previous = points[(i + points.size() - 1) % points.size()];
         const auto current = points[i];
-        const auto next = points[(i + 1) % points.size()];
-        const auto previous_edge = normalized(subtract(current, previous));
-        const auto next_edge = normalized(subtract(next, current));
-        const auto previous_normal = multiply(
-            Vec2{previous_edge.y, -previous_edge.x}, orientation);
-        const auto next_normal = multiply(Vec2{next_edge.y, -next_edge.x}, orientation);
+        const auto next = points[i + 1 == points.size() ? 0 : i + 1];
+        const auto next_normal = edge_normal(current, next);
         auto miter = normalized(add(previous_normal, next_normal));
         float distance = fringe;
         const float denominator = dot(miter, next_normal);
@@ -420,6 +425,7 @@ void fringe_outline(std::span<const Vec2> points, float fringe, std::vector<Vec2
         }
         distance = std::clamp(distance, -2.0f * fringe, 2.0f * fringe);
         out.push_back(add(current, multiply(miter, distance)));
+        previous_normal = next_normal;
     }
 }
 
