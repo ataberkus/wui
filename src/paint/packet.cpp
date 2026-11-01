@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <type_traits>
 
 namespace wui {
 namespace {
@@ -33,20 +32,19 @@ std::uint32_t nonfinite_bits(Rect value) {
 bool finite(float value) { return (nonfinite_bits(value) & nonfinite_flag) == 0; }
 bool finite(Rect value) { return (nonfinite_bits(value) & nonfinite_flag) == 0; }
 
-// Every Vertex member is a float (static_asserts in draw.hpp pin the layout),
-// so a vertex is checked as eight 32-bit words with independent accumulators,
-// a shape compilers turn into a few SIMD operations per vertex.
-static_assert(std::is_trivially_copyable_v<Vertex>);
-static_assert(sizeof(Vertex) == 8 * sizeof(float));
-using VertexWords = std::array<std::uint32_t, sizeof(Vertex) / sizeof(std::uint32_t)>;
-
+// Eight independent accumulators, one per Vertex member, form a shape that
+// compilers turn into a few SIMD operations per vertex.
 bool finite_vertices(const std::vector<Vertex>& vertices) {
-    VertexWords flags{};
+    std::array<std::uint32_t, 8> flags{};
     for (const auto& vertex : vertices) {
-        const auto words = std::bit_cast<VertexWords>(vertex);
-        for (std::size_t i = 0; i < words.size(); ++i) {
-            flags[i] |= (words[i] & exponent_mask) + exponent_unit;
-        }
+        flags[0] |= nonfinite_bits(vertex.position.x);
+        flags[1] |= nonfinite_bits(vertex.position.y);
+        flags[2] |= nonfinite_bits(vertex.uv.x);
+        flags[3] |= nonfinite_bits(vertex.uv.y);
+        flags[4] |= nonfinite_bits(vertex.premultiplied.r);
+        flags[5] |= nonfinite_bits(vertex.premultiplied.g);
+        flags[6] |= nonfinite_bits(vertex.premultiplied.b);
+        flags[7] |= nonfinite_bits(vertex.premultiplied.a);
     }
     std::uint32_t any = 0;
     for (const auto flag : flags) any |= flag;
@@ -75,9 +73,17 @@ bool indices_in_range(const std::uint32_t* indices, std::size_t count, std::int3
     const auto last = static_cast<std::uint32_t>(vertex_count - 1);
     const std::uint32_t guard = base >= 0 ? 0xffffffffu : 0u;
     std::uint32_t flags = 0;
-    for (std::size_t i = 0; i < count; ++i) {
-        const std::uint32_t vertex = indices[i] + offset;
-        flags |= (indices[i] & guard) | vertex | (last - vertex);
+    if (base == 0) {
+        // The same flags with offset 0 and guard ~0: canvas batches all
+        // use base vertex 0, and the simpler loop vectorizes more tightly.
+        for (std::size_t i = 0; i < count; ++i) {
+            flags |= indices[i] | (last - indices[i]);
+        }
+    } else {
+        for (std::size_t i = 0; i < count; ++i) {
+            const std::uint32_t vertex = indices[i] + offset;
+            flags |= (indices[i] & guard) | vertex | (last - vertex);
+        }
     }
     return (flags & 0x80000000u) == 0;
 }
