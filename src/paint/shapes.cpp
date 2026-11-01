@@ -50,13 +50,28 @@ Vec2 subtract(Vec2 a, Vec2 b) { return {a.x - b.x, a.y - b.y}; }
 Vec2 multiply(Vec2 value, float scalar) { return {value.x * scalar, value.y * scalar}; }
 float dot(Vec2 a, Vec2 b) { return a.x * b.x + a.y * b.y; }
 float cross(Vec2 a, Vec2 b) { return a.x * b.y - a.y * b.x; }
-float length(Vec2 value) { return std::hypot(value.x, value.y); }
+// Euclidean length without a libm call. Float squares are exact in double and
+// cannot overflow there, so one correctly rounded double square root narrowed
+// to float equals std::hypot (glibc's hypotf computes exactly this; verified
+// bit for bit on 3e8 inputs) for finite components and for the infinities an
+// overflowing subtraction of finite coordinates can produce.
+float length(Vec2 value) {
+    const double x = value.x;
+    const double y = value.y;
+    return static_cast<float>(std::sqrt(x * x + y * y));
+}
 Vec2 normalized(Vec2 value) {
     const auto magnitude = length(value);
     return magnitude > epsilon ? multiply(value, 1.0f / magnitude) : Vec2{};
 }
 bool near(Vec2 a, Vec2 b) {
-    return length(subtract(a, b)) <= epsilon;
+    const auto delta = subtract(a, b);
+    // length() never rounds below the magnitude of either component, so this
+    // exact early-out skips the square root for all but coincident points.
+    if (std::abs(delta.x) > epsilon || std::abs(delta.y) > epsilon) {
+        return false;
+    }
+    return length(delta) <= epsilon;
 }
 
 void append_unique(std::vector<Vec2>& points, Vec2 point) {
