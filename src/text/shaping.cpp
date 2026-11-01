@@ -86,6 +86,14 @@ Result<std::uint32_t> physical_size(const ShapeRequest& request) {
     if (rounded > std::numeric_limits<FT_UShort>::max()) {
         return Error{ErrorCode::capacity, "Physical text size exceeds FreeType pixel-size limits"};
     }
+    return static_cast<std::uint32_t>(rounded);
+}
+
+// Checks that depend only on the request's text and language bytes. Both are
+// part of the run cache key and a run is cached only after passing them, so a
+// cache hit needs no recheck; shape() runs them on a miss, still after
+// physical_size(), which preserves the original error precedence.
+Status validate_request_bytes(const ShapeRequest& request) {
     if (request.text.size() > text_request_byte_limit ||
         request.language.size() > text_request_byte_limit - request.text.size()) {
         return Error{ErrorCode::capacity, "Text request exceeds the one-MiB byte limit"};
@@ -100,7 +108,7 @@ Result<std::uint32_t> physical_size(const ShapeRequest& request) {
             return Error{ErrorCode::invalid_argument, "Text language must be an ASCII language tag"};
         }
     }
-    return static_cast<std::uint32_t>(rounded);
+    return std::nullopt;
 }
 
 void sanitize(const FontFace& face, std::string_view source,
@@ -172,7 +180,14 @@ std::size_t hash_run_key(std::string_view text, std::string_view language, FontR
     const auto combine = [&value](std::size_t part) {
         value ^= part + static_cast<std::size_t>(0x9e3779b9U) + (value << 6) + (value >> 2);
     };
-    combine(std::hash<std::string_view>{}(language));
+    // Language tags are a few bytes ("und" by default): an inline FNV-1a is
+    // much cheaper for them than another library hash call.
+    std::uint64_t tag = 14695981039346656037ULL;
+    for (const unsigned char byte : language) {
+        tag ^= byte;
+        tag *= 1099511628211ULL;
+    }
+    combine(static_cast<std::size_t>(tag));
     combine(static_cast<std::size_t>(role));
     combine(physical_ppem);
     combine(std::bit_cast<std::uint32_t>(scale));
@@ -236,6 +251,9 @@ Result<std::shared_ptr<const TextRun>> TextService::shape(const ShapeRequest& re
             // A hit is a use: move the entry to the most recent end.
             lru_.splice(lru_.begin(), lru_, found->second);
             return found->second->run;
+        }
+        if (auto error = validate_request_bytes(request)) {
+            return std::move(*error);
         }
         // A single run may use the whole budget; make_room evicts for it below.
         constexpr auto available = text_cache_byte_limit;
