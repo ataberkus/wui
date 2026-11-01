@@ -73,10 +73,19 @@ void FrameState::abort() noexcept {
     active = false;
 }
 void FrameState::prune() noexcept {
+    // One pass over the widget map: widgets emitted in the frame that just
+    // completed become present at `completed` (and so cannot be stale);
+    // the others are erased once absent for 120 completed frames.
     for (auto it = widgets.begin(); it != widgets.end();) {
-        if (completed >= it->second.last_present &&
-            completed - it->second.last_present >= 120) it = widgets.erase(it);
-        else ++it;
+        auto& widget = it->second;
+        if (widget.seen == generation) {
+            widget.last_present = completed;
+            ++it;
+        } else if (completed >= widget.last_present && completed - widget.last_present >= 120) {
+            it = widgets.erase(it);
+        } else {
+            ++it;
+        }
     }
     prune_edits();
 }
