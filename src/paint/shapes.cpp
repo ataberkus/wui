@@ -747,50 +747,90 @@ struct Canvas::Impl {
         merge_barrier = true;
     }
 
-    bool append(std::span<const Vertex> vertices, std::span<const std::uint32_t> indices,
-                TextureHandle texture) {
+    // Shapes write their geometry straight into the retained packet buffers
+    // rather than building it in scratch storage and copying it over:
+    // begin_mesh() checks the frame and guarantees capacity for the exact
+    // vertex and index counts (so the shape's push_backs never reallocate),
+    // the shape pushes vertices and base-offset indices, and end_mesh()
+    // records the new index range as a batch or extends the previous one.
+    struct Mesh {
+        std::uint32_t base = 0;        // packet index of the mesh's first vertex
+        std::uint32_t first_index = 0; // packet index of the mesh's first index
+    };
+
+    template <typename T>
+    static void reserve_more(std::vector<T>& values, std::size_t count) {
+        if (values.capacity() - values.size() < count) {
+            // Geometric growth, as insert() would apply, keeps warm-up amortized.
+            values.reserve(values.size() + std::max(values.size(), count));
+        }
+    }
+
+    std::optional<Mesh> begin_mesh(std::size_t vertex_count, std::size_t index_count) {
         if (!ready() || clips.back().w == 0.0f || clips.back().h == 0.0f) {
-            return false;
+            return std::nullopt;
         }
-        if (current->vertices.size() > std::numeric_limits<std::uint32_t>::max() -
-                                           vertices.size() ||
-            current->indices.size() > std::numeric_limits<std::uint32_t>::max() -
-                                          indices.size()) {
+        auto& vertices = current->vertices;
+        auto& indices = current->indices;
+        if (vertices.size() > std::numeric_limits<std::uint32_t>::max() - vertex_count ||
+            indices.size() > std::numeric_limits<std::uint32_t>::max() - index_count) {
             fail({ErrorCode::capacity, "Canvas geometry exceeds packet limits"});
-            return false;
+            return std::nullopt;
         }
-        const auto base = static_cast<std::uint32_t>(current->vertices.size());
-        const auto first_index = static_cast<std::uint32_t>(current->indices.size());
-        current->vertices.insert(current->vertices.end(), vertices.begin(), vertices.end());
-        for (const auto index : indices) {
-            current->indices.push_back(base + index);
-        }
-        if (!merge_barrier && !current->batches.empty() &&
+        reserve_more(vertices, vertex_count);
+        reserve_more(indices, index_count);
+        return Mesh{static_cast<std::uint32_t>(vertices.size()),
+                    static_cast<std::uint32_t>(indices.size())};
+    }
+
+    void end_mesh(Mesh mesh, TextureHandle texture) {
+        const auto index_count =
+            static_cast<std::uint32_t>(current->indices.size() - mesh.first_index);
+        auto& batches = current->batches;
+        if (!merge_barrier && !batches.empty() &&
             pending_batches.back().texture == texture &&
-            equal(current->batches.back().clip, clips.back()) &&
-            current->batches.back().first_index + current->batches.back().index_count ==
-                first_index) {
-            current->batches.back().index_count += static_cast<std::uint32_t>(indices.size());
+            equal(batches.back().clip, clips.back()) &&
+            batches.back().first_index + batches.back().index_count == mesh.first_index) {
+            batches.back().index_count += index_count;
         } else {
-            current->batches.push_back({first_index, static_cast<std::uint32_t>(indices.size()),
-                                        0, 0, clips.back()});
+            batches.push_back({mesh.first_index, index_count, 0, 0, clips.back()});
             pending_batches.push_back({texture});
         }
         merge_barrier = false;
-        return true;
+    }
+
+    template <std::size_t N>
+    static void push_indices(std::vector<std::uint32_t>& indices,
+                             const std::array<std::uint32_t, N>& values) {
+        for (const auto value : values) {
+            indices.push_back(value);
+        }
+    }
+
+    // Two triangles over four corners given in winding order.
+    void quad_unchecked(const std::array<Vertex, 4>& corners, TextureHandle texture) {
+        const auto mesh = begin_mesh(4, 6);
+        if (!mesh) {
+            return;
+        }
+        for (const auto& corner : corners) {
+            current->vertices.push_back(corner);
+        }
+        const auto b = mesh->base;
+        push_indices(current->indices, std::array{b, b + 1, b + 2, b, b + 2, b + 3});
+        end_mesh(*mesh, texture);
     }
 
     void image_unchecked(Rect bounds, TextureHandle texture, Rect uv, Color tint) {
         const auto color = premultiply(tint);
-        const std::array vertices{
-            Vertex{{bounds.x, bounds.y}, {uv.x, uv.y}, color},
-            Vertex{{bounds.x + bounds.w, bounds.y}, {uv.x + uv.w, uv.y}, color},
-            Vertex{{bounds.x + bounds.w, bounds.y + bounds.h},
-                   {uv.x + uv.w, uv.y + uv.h}, color},
-            Vertex{{bounds.x, bounds.y + bounds.h}, {uv.x, uv.y + uv.h}, color},
-        };
-        constexpr std::array<std::uint32_t, 6> indices{0, 1, 2, 0, 2, 3};
-        append(vertices, indices, texture);
+        quad_unchecked({
+                           Vertex{{bounds.x, bounds.y}, {uv.x, uv.y}, color},
+                           Vertex{{bounds.x + bounds.w, bounds.y}, {uv.x + uv.w, uv.y}, color},
+                           Vertex{{bounds.x + bounds.w, bounds.y + bounds.h},
+                                  {uv.x + uv.w, uv.y + uv.h}, color},
+                           Vertex{{bounds.x, bounds.y + bounds.h}, {uv.x, uv.y + uv.h}, color},
+                       },
+                       texture);
     }
 
     void polygon_unchecked(std::span<const Vec2> points, Color color,
@@ -799,36 +839,44 @@ struct Canvas::Impl {
         if (points.size() < 3 || clips.back().w == 0.0f || clips.back().h == 0.0f) {
             return;
         }
-        const auto inner_color = premultiply(color);
-        vertex_scratch.clear();
-        vertex_scratch.reserve(points.size() * 2);
-        for (const auto point : points) {
-            vertex_scratch.push_back({point, {0.5f, 0.5f}, inner_color});
-        }
         if (outer.empty()) {
             fringe_outline(points, 1.0f / current->scale, fringe_scratch);
             outer = fringe_scratch;
         }
-        for (const auto point : outer) {
-            vertex_scratch.push_back({point, {0.5f, 0.5f}, {0, 0, 0, 0}});
+        const auto count = static_cast<std::uint32_t>(points.size());
+        const std::size_t interior_count =
+            interior.empty() ? (points.size() - 2) * 3 : interior.size();
+        const auto mesh =
+            begin_mesh(points.size() + outer.size(), interior_count + points.size() * 6);
+        if (!mesh) {
+            return;
         }
-
-        index_scratch.clear();
-        index_scratch.reserve((points.size() - 2) * 3 + points.size() * 6);
+        const auto inner_color = premultiply(color);
+        auto& vertices = current->vertices;
+        auto& indices = current->indices;
+        for (const auto point : points) {
+            vertices.push_back({point, {0.5f, 0.5f}, inner_color});
+        }
+        for (const auto point : outer) {
+            vertices.push_back({point, {0.5f, 0.5f}, {0, 0, 0, 0}});
+        }
+        const auto b = mesh->base;
         if (interior.empty()) {
-            for (std::uint32_t i = 1; i + 1 < points.size(); ++i) {
-                index_scratch.insert(index_scratch.end(), {0, i, i + 1});
+            for (std::uint32_t i = 1; i + 1 < count; ++i) {
+                push_indices(indices, std::array{b, b + i, b + i + 1});
             }
         } else {
-            index_scratch.insert(index_scratch.end(), interior.begin(), interior.end());
+            for (const auto index : interior) {
+                indices.push_back(b + index);
+            }
         }
-        const auto outer_index = static_cast<std::uint32_t>(points.size());
-        for (std::uint32_t i = 0; i < points.size(); ++i) {
-            const auto next = (i + 1) % static_cast<std::uint32_t>(points.size());
-            index_scratch.insert(index_scratch.end(), {i, outer_index + next, next,
-                                                       i, outer_index + i, outer_index + next});
+        const auto o = b + count; // first outer (fringe) vertex
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const auto next = i + 1 == count ? 0 : i + 1;
+            push_indices(indices, std::array{b + i, o + next, b + next,
+                                             b + i, o + i, o + next});
         }
-        append(vertex_scratch, index_scratch, *white);
+        end_mesh(*mesh, *white);
     }
 
     void stroke_coverage(std::span<const Vec2> points, float width, Color color) {
@@ -929,8 +977,7 @@ struct Canvas::Impl {
     std::vector<TextureHandle> frame_handles;
     std::vector<Vec2> outline_scratch, fringe_scratch, clean_scratch, direction_scratch,
                       normal_scratch, plus_scratch, minus_scratch;
-    std::vector<Vertex> vertex_scratch;
-    std::vector<std::uint32_t> index_scratch, remaining_scratch, triangle_scratch;
+    std::vector<std::uint32_t> remaining_scratch, triangle_scratch;
     // Detached overlay layers: batch descriptors moved out of the main order
     // and appended above it by flush_layers().
     std::vector<Batch> layer_batches;
@@ -1034,14 +1081,14 @@ void Canvas::gradient(Rect bounds, Color top, Color bottom) {
         return;
     }
     if (bounds.w == 0 || bounds.h == 0) return;
-    const std::array vertices{
-        Vertex{{bounds.x, bounds.y}, {0.5f, 0.5f}, premultiply(top)},
-        Vertex{{bounds.x + bounds.w, bounds.y}, {0.5f, 0.5f}, premultiply(top)},
-        Vertex{{bounds.x + bounds.w, bounds.y + bounds.h}, {0.5f, 0.5f}, premultiply(bottom)},
-        Vertex{{bounds.x, bounds.y + bounds.h}, {0.5f, 0.5f}, premultiply(bottom)},
-    };
-    constexpr std::array<std::uint32_t, 6> indices{0, 1, 2, 0, 2, 3};
-    impl_->append(vertices, indices, *impl_->white);
+    impl_->quad_unchecked(
+        {
+            Vertex{{bounds.x, bounds.y}, {0.5f, 0.5f}, premultiply(top)},
+            Vertex{{bounds.x + bounds.w, bounds.y}, {0.5f, 0.5f}, premultiply(top)},
+            Vertex{{bounds.x + bounds.w, bounds.y + bounds.h}, {0.5f, 0.5f}, premultiply(bottom)},
+            Vertex{{bounds.x, bounds.y + bounds.h}, {0.5f, 0.5f}, premultiply(bottom)},
+        },
+        *impl_->white);
 }
 
 void Canvas::gradient(Rect bounds, Color top_left, Color top_right,
@@ -1060,12 +1107,10 @@ void Canvas::gradient(Rect bounds, Color top_left, Color top_right,
         return Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
                      a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t};
     };
-    auto& vertices = impl_->vertex_scratch;
-    auto& indices = impl_->index_scratch;
-    vertices.clear();
-    indices.clear();
-    vertices.reserve((cells + 1) * (cells + 1));
-    indices.reserve(cells * cells * 6);
+    const auto mesh = impl_->begin_mesh((cells + 1) * (cells + 1), cells * cells * 6);
+    if (!mesh) return;
+    auto& vertices = impl_->current->vertices;
+    auto& indices = impl_->current->indices;
     for (std::uint32_t y = 0; y <= cells; ++y) {
         const float v = static_cast<float>(y) / cells;
         const Color left = lerp(corners[0], corners[3], v);
@@ -1080,14 +1125,14 @@ void Canvas::gradient(Rect bounds, Color top_left, Color top_right,
     }
     for (std::uint32_t y = 0; y < cells; ++y) {
         for (std::uint32_t x = 0; x < cells; ++x) {
-            const std::uint32_t a = y * (cells + 1) + x;
+            const std::uint32_t a = mesh->base + y * (cells + 1) + x;
             const std::uint32_t b = a + 1;
             const std::uint32_t c = a + cells + 2;
             const std::uint32_t d = a + cells + 1;
-            indices.insert(indices.end(), {a, b, c, a, c, d});
+            Impl::push_indices(indices, std::array{a, b, c, a, c, d});
         }
     }
-    impl_->append(vertices, indices, *impl_->white);
+    impl_->end_mesh(*mesh, *impl_->white);
 }
 
 void Canvas::border(Rect bounds, float radius, float width, Color color) {
@@ -1108,14 +1153,14 @@ void Canvas::border(Rect bounds, float radius, float width, Color color) {
     const float inner_radius = std::max(0.0f, outer_radius - width);
     auto& outer = impl_->outline_scratch;
     auto& fringe = impl_->fringe_scratch;
-    auto& vertices = impl_->vertex_scratch;
-    auto& indices = impl_->index_scratch;
     rounded_outline(bounds, outer_radius, impl_->current->scale, outer);
     fringe_outline(outer, 1.0f / impl_->current->scale, fringe);
     const auto count = static_cast<std::uint32_t>(outer.size());
+    const auto mesh = impl_->begin_mesh(std::size_t{count} * 3, std::size_t{count} * 12);
+    if (!mesh) return;
+    auto& vertices = impl_->current->vertices;
+    auto& indices = impl_->current->indices;
     const Color fill = premultiply(color);
-    vertices.clear();
-    vertices.reserve(count * 3);
     for (const auto point : outer)
         vertices.push_back({point, {0.5f, 0.5f}, fill});
     const float middle_x = bounds.x + bounds.w * 0.5f;
@@ -1138,15 +1183,17 @@ void Canvas::border(Rect bounds, float radius, float width, Color color) {
     }
     for (const auto point : fringe)
         vertices.push_back({point, {0.5f, 0.5f}, {0, 0, 0, 0}});
-    indices.clear();
-    indices.reserve(count * 12);
+    // Rings of `count` vertices each: outer edge, inner edge, outer fringe.
+    const auto o = mesh->base;
+    const auto n = o + count;
+    const auto f = o + count * 2;
     for (std::uint32_t i = 0; i < count; ++i) {
-        const auto next = (i + 1) % count;
-        indices.insert(indices.end(), {i, next, count + next, i, count + next, count + i,
-                                       i, count * 2 + next, next,
-                                       i, count * 2 + i, count * 2 + next});
+        const auto next = i + 1 == count ? 0 : i + 1;
+        Impl::push_indices(indices, std::array{o + i, o + next, n + next, o + i, n + next, n + i,
+                                               o + i, f + next, o + next,
+                                               o + i, f + i, f + next});
     }
-    impl_->append(vertices, indices, *impl_->white);
+    impl_->end_mesh(*mesh, *impl_->white);
 }
 
 void Canvas::convex(std::span<const Vec2> points, Color color) {
