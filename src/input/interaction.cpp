@@ -1,13 +1,83 @@
 #include <wui/input.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <stdexcept>
 #include <utility>
 
 namespace wui {
 namespace {
 constexpr float wheel_pixels_per_notch = 32.0f;
+// Fibonacci hashing multiplier (2^64 / golden ratio). Its top product bits
+// spread sequential ids (tests and hosts may use 1, 2, 3...) as well as the
+// already well-mixed child_id hashes.
+constexpr std::uint64_t id_mix = 0x9E3779B97F4A7C15ULL;
+constexpr std::size_t id_set_initial_slots = 64;
 }
+
+namespace detail {
+std::size_t IdSet::home(std::uint64_t id) const noexcept {
+    return static_cast<std::size_t>((id * id_mix) >> shift_);
+}
+
+void IdSet::clear() noexcept {
+    size_ = 0;
+    if (++stamp_ == 0) {
+        // The generation wrapped (once per 2^32 clears): free every slot
+        // explicitly so no stale stamp can alias the new generation.
+        for (auto& slot : slots_) slot.stamp = 0;
+        stamp_ = 1;
+    }
+}
+
+bool IdSet::contains(std::uint64_t id) const noexcept {
+    if (slots_.empty()) return false;
+    const auto mask = slots_.size() - 1;
+    // The load factor stays at or below one half, so a free slot ends every probe.
+    for (auto index = home(id);; index = (index + 1) & mask) {
+        const auto& slot = slots_[index];
+        if (slot.stamp != stamp_) return false;
+        if (slot.id == id) return true;
+    }
+}
+
+bool IdSet::insert(std::uint64_t id) {
+    if (size_ >= capacity()) {
+        // Only a genuinely new id may grow the storage.
+        if (contains(id)) return false;
+        grow();
+    }
+    const auto mask = slots_.size() - 1;
+    for (auto index = home(id);; index = (index + 1) & mask) {
+        auto& slot = slots_[index];
+        if (slot.stamp != stamp_) {
+            slot = {id, stamp_};
+            ++size_;
+            return true;
+        }
+        if (slot.id == id) return false;
+    }
+}
+
+void IdSet::grow() {
+    std::vector<Slot> next;
+    if (slots_.size() > next.max_size() / 2)
+        throw std::length_error("IdSet capacity exceeded");
+    const std::size_t count = slots_.empty() ? id_set_initial_slots : slots_.size() * 2;
+    next.resize(count); // may throw; *this is untouched until the swap below
+    const auto shift = static_cast<unsigned>(64 - std::countr_zero(count));
+    const auto mask = count - 1;
+    for (const auto& slot : slots_) {
+        if (slot.stamp != stamp_) continue;
+        auto index = static_cast<std::size_t>((slot.id * id_mix) >> shift);
+        while (next[index].stamp == stamp_) index = (index + 1) & mask;
+        next[index] = {slot.id, stamp_};
+    }
+    slots_.swap(next);
+    shift_ = shift;
+}
+} // namespace detail
 
 void Interaction::clear_press() {
     keyboard_owner_ = {};
@@ -194,9 +264,7 @@ void Interaction::begin(const FrameInput& input, Id popup_owner_at_frame_start) 
 }
 
 Behavior Interaction::button(Id id, Rect bounds, bool enabled) {
-    if (!active_ || id == Id{} ||
-        std::find(seen_.begin(), seen_.end(), id) != seen_.end()) return {};
-    seen_.push_back(id);
+    if (!active_ || id == Id{} || !seen_.insert(id.value)) return {};
     if (!enabled) {
         if (focus_ == id) focus_ = {};
         if (capture_ == id) capture_ = {};
@@ -273,9 +341,7 @@ Behavior Interaction::button(Id id, Rect bounds, bool enabled) {
 DragResult Interaction::drag(Id id, Rect bounds, bool enabled) {
     drag_actions_.clear();
     DragResult result;
-    if (!active_ || id == Id{} ||
-        std::find(seen_.begin(), seen_.end(), id) != seen_.end()) return result;
-    seen_.push_back(id);
+    if (!active_ || id == Id{} || !seen_.insert(id.value)) return result;
     if (!enabled) {
         if (focus_ == id) focus_ = {};
         if (capture_ == id) capture_ = {};
@@ -345,10 +411,8 @@ DragResult Interaction::drag(Id id, Rect bounds, bool enabled) {
 
 
 Behavior Interaction::popup_button(Id id, Rect bounds, bool enabled) {
-    if (!active_ || popup_dismissed_ || id == Id{} ||
-        std::find(seen_.begin(), seen_.end(), id) != seen_.end())
+    if (!active_ || popup_dismissed_ || id == Id{} || !seen_.insert(id.value))
         return {};
-    seen_.push_back(id);
     if (!enabled) {
         if (focus_ == id) focus_ = {};
         if (capture_ == id) capture_ = {};
@@ -514,13 +578,20 @@ std::optional<Vec2> Interaction::pointer() const {
 
 void Interaction::end() {
     if (!active_) return;
-    const auto eligible = [this](Id id) {
-        return std::find(current_order_.begin(), current_order_.end(), id) != current_order_.end();
-    };
-    if (!eligible(focus_)) focus_ = {};
-    if (!eligible(capture_)) capture_ = {};
-    if (!eligible(secondary_)) secondary_ = {};
-    if (!eligible(keyboard_owner_)) clear_press();
+    // Persistent owners survive only if they were emitted enabled this frame;
+    // one pass over the eligible order checks all four.
+    bool focus_eligible = false, capture_eligible = false;
+    bool secondary_eligible = false, keyboard_eligible = false;
+    for (const Id id : current_order_) {
+        focus_eligible = focus_eligible || id == focus_;
+        capture_eligible = capture_eligible || id == capture_;
+        secondary_eligible = secondary_eligible || id == secondary_;
+        keyboard_eligible = keyboard_eligible || id == keyboard_owner_;
+    }
+    if (!focus_eligible) focus_ = {};
+    if (!capture_eligible) capture_ = {};
+    if (!secondary_eligible) secondary_ = {};
+    if (!keyboard_eligible) clear_press();
     previous_order_.swap(current_order_);
     previous_popup_order_.swap(current_popup_order_);
     active_ = false;

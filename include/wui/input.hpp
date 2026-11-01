@@ -13,7 +13,43 @@
 #include <utility>
 
 namespace wui {
-namespace detail { struct FrameState; }
+namespace detail {
+struct FrameState;
+
+// Set of nonzero 64-bit ids with O(1) insert, lookup and clear, used for
+// per-frame id bookkeeping. Open addressing with linear probing: a slot is
+// occupied only while its stamp equals the current generation, so clear()
+// just advances the generation instead of touching the slots. Storage is
+// retained across clear(); it doubles (with a rehash) only when one
+// generation holds more than half as many ids as there are slots, so a frame
+// that inserts no more ids than an earlier frame never allocates. Growth may
+// throw std::bad_alloc or std::length_error and then leaves the set
+// unchanged: an id is never dropped silently.
+class IdSet {
+public:
+    void clear() noexcept;
+    // True when `id` was absent and has been inserted; false when present.
+    // `id` must be nonzero.
+    bool insert(std::uint64_t id);
+    bool contains(std::uint64_t id) const noexcept;
+    std::size_t size() const noexcept { return size_; }
+    // Ids one generation can hold before the next insert grows the storage.
+    std::size_t capacity() const noexcept { return slots_.size() / 2; }
+
+private:
+    struct Slot {
+        std::uint64_t id = 0;
+        std::uint32_t stamp = 0; // occupied when equal to stamp_
+    };
+    std::size_t home(std::uint64_t id) const noexcept;
+    void grow();
+
+    std::vector<Slot> slots_; // power-of-two size, or empty
+    unsigned shift_ = 64;     // 64 - log2(slots_.size())
+    std::uint32_t stamp_ = 1; // never zero; zero-stamped slots are free
+    std::size_t size_ = 0;
+};
+} // namespace detail
 
 enum class EventKind { pointer_move, pointer_down, pointer_up, wheel,
                        key_down, key_up, focus_lost, text, composition };
@@ -128,7 +164,10 @@ private:
     std::vector<EventRecord> pending_records_;
     std::vector<InputEvent> pending_;
     std::vector<InputEvent> raw_;
-    std::vector<Id> previous_order_, current_order_, seen_;
+    std::vector<Id> previous_order_, current_order_;
+    // Ids claimed this frame by button/drag/edit/popup_button (enabled or
+    // not); a second claim of the same id in one frame is ignored.
+    detail::IdSet seen_;
     std::vector<DragAction> drag_actions_;
     Id focus_{}, capture_{}, initial_capture_{}, keyboard_owner_{};
     Id secondary_{}, initial_secondary_{};
@@ -146,9 +185,7 @@ private:
     std::optional<std::size_t> focus_event_, capture_event_, secondary_event_;
 };
 template<class F> void Interaction::edit(Id id, bool enabled, F&& on_event) {
-    if (!active_ || id == Id{} ||
-        std::find(seen_.begin(), seen_.end(), id) != seen_.end()) return;
-    seen_.push_back(id);
+    if (!active_ || id == Id{} || !seen_.insert(id.value)) return;
     if (!enabled || blocked()) {
         if (!enabled) {
             if (focus_ == id) focus_ = {};
