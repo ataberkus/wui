@@ -41,6 +41,13 @@ bool valid_color(Color value) {
     return (value.r >= 0.0f) & (value.r <= 1.0f) & (value.g >= 0.0f) & (value.g <= 1.0f) &
            (value.b >= 0.0f) & (value.b <= 1.0f) & (value.a >= 0.0f) & (value.a <= 1.0f);
 }
+// premultiply() for a color that passed valid_color(): its clamping is then
+// the identity, so this is the same product without the call and re-check.
+// Every canvas entry point validates its colors before tessellating.
+Color premultiply_valid(Color value) {
+    assert(valid_color(value));
+    return {value.r * value.a, value.g * value.a, value.b * value.a, value.a};
+}
 bool valid_rect(Rect value) {
     return finite(value) & (value.w >= 0.0f) & (value.h >= 0.0f);
 }
@@ -907,7 +914,7 @@ struct Canvas::Impl {
     }
 
     void image_unchecked(Rect bounds, TextureHandle texture, Rect uv, Color tint) {
-        const auto color = premultiply(tint);
+        const auto color = premultiply_valid(tint);
         quad_unchecked({
                            Vertex{{bounds.x, bounds.y}, {uv.x, uv.y}, color},
                            Vertex{{bounds.x + bounds.w, bounds.y}, {uv.x + uv.w, uv.y}, color},
@@ -936,7 +943,7 @@ struct Canvas::Impl {
         if (!mesh) {
             return;
         }
-        const auto inner_color = premultiply(color);
+        const auto inner_color = premultiply_valid(color);
         Vertex* vertex = mesh->vertex;
         for (const auto point : points) {
             *vertex++ = {point, {0.5f, 0.5f}, inner_color};
@@ -1169,10 +1176,10 @@ void Canvas::gradient(Rect bounds, Color top, Color bottom) {
     if (bounds.w == 0 || bounds.h == 0) return;
     impl_->quad_unchecked(
         {
-            Vertex{{bounds.x, bounds.y}, {0.5f, 0.5f}, premultiply(top)},
-            Vertex{{bounds.x + bounds.w, bounds.y}, {0.5f, 0.5f}, premultiply(top)},
-            Vertex{{bounds.x + bounds.w, bounds.y + bounds.h}, {0.5f, 0.5f}, premultiply(bottom)},
-            Vertex{{bounds.x, bounds.y + bounds.h}, {0.5f, 0.5f}, premultiply(bottom)},
+            Vertex{{bounds.x, bounds.y}, {0.5f, 0.5f}, premultiply_valid(top)},
+            Vertex{{bounds.x + bounds.w, bounds.y}, {0.5f, 0.5f}, premultiply_valid(top)},
+            Vertex{{bounds.x + bounds.w, bounds.y + bounds.h}, {0.5f, 0.5f}, premultiply_valid(bottom)},
+            Vertex{{bounds.x, bounds.y + bounds.h}, {0.5f, 0.5f}, premultiply_valid(bottom)},
         },
         *impl_->white);
 }
@@ -1187,8 +1194,8 @@ void Canvas::gradient(Rect bounds, Color top_left, Color top_right,
     }
     if (bounds.w == 0 || bounds.h == 0) return;
     constexpr std::uint32_t cells = 8;
-    const Color corners[4]{premultiply(top_left), premultiply(top_right),
-                           premultiply(bottom_right), premultiply(bottom_left)};
+    const Color corners[4]{premultiply_valid(top_left), premultiply_valid(top_right),
+                           premultiply_valid(bottom_right), premultiply_valid(bottom_left)};
     const auto lerp = [](Color a, Color b, float t) {
         return Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
                      a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t};
@@ -1242,7 +1249,7 @@ void Canvas::border(Rect bounds, float radius, float width, Color color) {
     const auto count = static_cast<std::uint32_t>(outer.size());
     auto mesh = impl_->begin_mesh(std::size_t{count} * 3, std::size_t{count} * 12);
     if (!mesh) return;
-    const Color fill = premultiply(color);
+    const Color fill = premultiply_valid(color);
     for (const auto point : outer)
         *mesh->vertex++ = {point, {0.5f, 0.5f}, fill};
     const float middle_x = bounds.x + bounds.w * 0.5f;
@@ -1561,6 +1568,11 @@ namespace detail {
 
 Status CanvasAccess::status(const Canvas& canvas) {
     const auto& impl = *canvas.impl_;
+    // Polled after nearly every widget and glyph: return without copying an
+    // optional Error in the common healthy case.
+    if (!impl.frame_error && !impl.construction_error) {
+        return std::nullopt;
+    }
     return impl.frame_error ? impl.frame_error : impl.construction_error;
 }
 
