@@ -578,20 +578,17 @@ std::optional<Vec2> Interaction::pointer() const {
 
 void Interaction::end() {
     if (!active_) return;
-    // Persistent owners survive only if they were emitted enabled this frame;
-    // one pass over the eligible order checks all four.
-    bool focus_eligible = false, capture_eligible = false;
-    bool secondary_eligible = false, keyboard_eligible = false;
-    for (const Id id : current_order_) {
-        focus_eligible = focus_eligible || id == focus_;
-        capture_eligible = capture_eligible || id == capture_;
-        secondary_eligible = secondary_eligible || id == secondary_;
-        keyboard_eligible = keyboard_eligible || id == keyboard_owner_;
-    }
-    if (!focus_eligible) focus_ = {};
-    if (!capture_eligible) capture_ = {};
-    if (!secondary_eligible) secondary_ = {};
-    if (!keyboard_eligible) clear_press();
+    // Persistent owners survive only if they were emitted enabled this frame.
+    // The eligible order never holds the zero id, so an empty owner needs no
+    // scan (the common case: nothing focused, captured or pressed).
+    const auto eligible = [this](Id id) {
+        return id != Id{} &&
+               std::find(current_order_.begin(), current_order_.end(), id) != current_order_.end();
+    };
+    if (!eligible(focus_)) focus_ = {};
+    if (!eligible(capture_)) capture_ = {};
+    if (!eligible(secondary_)) secondary_ = {};
+    if (!eligible(keyboard_owner_)) clear_press();
     previous_order_.swap(current_order_);
     previous_popup_order_.swap(current_popup_order_);
     active_ = false;
