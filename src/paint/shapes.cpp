@@ -179,7 +179,17 @@ void rounded_outline(Rect bounds, float radius, float scale, std::vector<Vec2>& 
         static_cast<int>(std::ceil((std::numbers::pi_v<float> * 0.5f) /
                                    std::max(maximum_step, epsilon))),
         min_corner_segments, max_corner_segments);
-    out.reserve(static_cast<std::size_t>((segments + 1) * 4));
+    // Room for every candidate point, written through a cursor (no capacity
+    // check per point) and trimmed afterwards. Consecutive near-duplicates
+    // are skipped exactly as append_unique would skip them.
+    out.resize(static_cast<std::size_t>((segments + 1) * 4));
+    Vec2* const first = out.data();
+    Vec2* last = first; // one past the most recently kept point
+    const auto keep = [first, &last](Vec2 point) {
+        if (last == first || !near(last[-1], point)) {
+            *last++ = point;
+        }
+    };
     const std::array centers{
         Vec2{bounds.x + radius, bounds.y + radius},
         Vec2{bounds.x + bounds.w - radius, bounds.y + radius},
@@ -193,12 +203,13 @@ void rounded_outline(Rect bounds, float radius, float scale, std::vector<Vec2>& 
     const Vec2* arc = arcs.points.data() + arcs.offset[static_cast<std::size_t>(segments)];
     for (std::size_t corner = 0; corner < centers.size(); ++corner) {
         const auto center = centers[corner];
-        append_unique(out, add(center, multiply(cardinal[corner], radius)));
+        keep(add(center, multiply(cardinal[corner], radius)));
         for (int segment = 1; segment < segments; ++segment, ++arc) {
-            append_unique(out, {center.x + arc->x * radius, center.y + arc->y * radius});
+            keep({center.x + arc->x * radius, center.y + arc->y * radius});
         }
-        append_unique(out, add(center, multiply(cardinal[(corner + 1) % 4], radius)));
+        keep(add(center, multiply(cardinal[(corner + 1) % 4], radius)));
     }
+    out.resize(static_cast<std::size_t>(last - first));
     remove_duplicate_closure(out);
 }
 
@@ -442,7 +453,7 @@ void fringe_outline(std::span<const Vec2> points, float fringe, std::vector<Vec2
     if (points.empty()) {
         return;
     }
-    out.reserve(points.size());
+    out.resize(points.size());
     const auto edge_normal = [orientation](Vec2 from, Vec2 to) {
         const auto edge = normalized(subtract(to, from));
         return multiply(Vec2{edge.y, -edge.x}, orientation);
@@ -463,7 +474,7 @@ void fringe_outline(std::span<const Vec2> points, float fringe, std::vector<Vec2
             miter = next_normal;
         }
         distance = std::clamp(distance, -2.0f * fringe, 2.0f * fringe);
-        out.push_back(add(current, multiply(miter, distance)));
+        out[i] = add(current, multiply(miter, distance));
         previous_normal = next_normal;
     }
 }
