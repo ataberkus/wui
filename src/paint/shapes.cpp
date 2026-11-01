@@ -820,47 +820,63 @@ struct Canvas::Impl {
         }
     }
 
-    std::optional<Mesh> begin_mesh(std::size_t vertex_count, std::size_t index_count) {
+    // The frame checks shared by every mesh, then capacity for the given
+    // counts. Returns false, having appended nothing, when the canvas cannot
+    // take paint; reserve is the only step that can throw.
+    bool reserve_mesh(std::size_t vertex_count, std::size_t index_count) {
         if (!ready() || clips.back().w == 0.0f || clips.back().h == 0.0f) {
-            return std::nullopt;
+            return false;
         }
         auto& vertices = current->vertices;
         auto& indices = current->indices;
         if (vertices.size() > std::numeric_limits<std::uint32_t>::max() - vertex_count ||
             indices.size() > std::numeric_limits<std::uint32_t>::max() - index_count) {
             fail({ErrorCode::capacity, "Canvas geometry exceeds packet limits"});
-            return std::nullopt;
+            return false;
         }
-        const auto base = vertices.size();
-        const auto first_index = indices.size();
         reserve_more(vertices, vertex_count);
         reserve_more(indices, index_count);
-        // Within reserved capacity resize cannot throw, so a failed
-        // reservation above leaves the packet untouched.
+        return true;
+    }
+
+    std::optional<Mesh> begin_mesh(std::size_t vertex_count, std::size_t index_count) {
+        if (!reserve_mesh(vertex_count, index_count)) {
+            return std::nullopt;
+        }
+        auto& vertices = current->vertices;
+        auto& indices = current->indices;
+        const auto base = vertices.size();
+        const auto first_index = indices.size();
+        // Within reserved capacity resize cannot throw.
         vertices.resize(base + vertex_count);
         indices.resize(first_index + index_count);
         return Mesh{vertices.data() + base, indices.data() + first_index,
                     static_cast<std::uint32_t>(base), static_cast<std::uint32_t>(first_index)};
     }
 
-    // `filled` is the mesh with its cursors advanced past the written slots.
-    void end_mesh(const Mesh& filled, TextureHandle texture) {
-        auto& indices = current->indices;
-        assert(filled.vertex == current->vertices.data() + current->vertices.size() &&
-               filled.index == indices.data() + indices.size() &&
-               "a shape must write every vertex and index slot it requested");
-        const auto index_count = static_cast<std::uint32_t>(indices.size() - filled.first_index);
+    // Records indices [first_index, end) as a batch or extends the previous one.
+    void end_mesh(std::uint32_t first_index, TextureHandle texture) {
+        const auto index_count =
+            static_cast<std::uint32_t>(current->indices.size() - first_index);
         auto& batches = current->batches;
         if (!merge_barrier && !batches.empty() &&
             pending_batches.back().texture == texture &&
             equal(batches.back().clip, clips.back()) &&
-            batches.back().first_index + batches.back().index_count == filled.first_index) {
+            batches.back().first_index + batches.back().index_count == first_index) {
             batches.back().index_count += index_count;
         } else {
-            batches.push_back({filled.first_index, index_count, 0, 0, clips.back()});
+            batches.push_back({first_index, index_count, 0, 0, clips.back()});
             pending_batches.push_back({texture});
         }
         merge_barrier = false;
+    }
+
+    // `filled` is the mesh with its cursors advanced past the written slots.
+    void end_mesh(const Mesh& filled, TextureHandle texture) {
+        assert(filled.vertex == current->vertices.data() + current->vertices.size() &&
+               filled.index == current->indices.data() + current->indices.size() &&
+               "a shape must write every vertex and index slot it requested");
+        end_mesh(filled.first_index, texture);
     }
 
     template <std::size_t N>
@@ -870,18 +886,24 @@ struct Canvas::Impl {
         }
     }
 
-    // Two triangles over four corners given in winding order.
+    // Two triangles over four corners given in winding order. Meshes this
+    // small are cheaper to push_back (within reserved capacity) than to
+    // resize and fill through cursors.
     void quad_unchecked(const std::array<Vertex, 4>& corners, TextureHandle texture) {
-        auto mesh = begin_mesh(4, 6);
-        if (!mesh) {
+        if (!reserve_mesh(4, 6)) {
             return;
         }
+        auto& vertices = current->vertices;
+        auto& indices = current->indices;
+        const auto b = static_cast<std::uint32_t>(vertices.size());
+        const auto first_index = static_cast<std::uint32_t>(indices.size());
         for (const auto& corner : corners) {
-            *mesh->vertex++ = corner;
+            vertices.push_back(corner);
         }
-        const auto b = mesh->base;
-        put(mesh->index, std::array{b, b + 1, b + 2, b, b + 2, b + 3});
-        end_mesh(*mesh, texture);
+        for (const auto index : {b, b + 1, b + 2, b, b + 2, b + 3}) {
+            indices.push_back(index);
+        }
+        end_mesh(first_index, texture);
     }
 
     void image_unchecked(Rect bounds, TextureHandle texture, Rect uv, Color tint) {
