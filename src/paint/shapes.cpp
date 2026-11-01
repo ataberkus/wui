@@ -110,6 +110,56 @@ struct PendingBatch {
     TextureHandle texture;
 };
 
+constexpr int min_corner_segments = 3;
+constexpr int max_corner_segments = 32;
+
+// Unit-circle points of the corner arcs for every segment count that
+// rounded_outline can choose: for n segments, the n - 1 interior points of
+// corners 0..3 (in that order) start at offset[n]. Entries use the float
+// angle expression rounded_outline used to evaluate per point, so sin and
+// cos no longer run for every corner point of every rounded shape. The table
+// is built once; compilers that evaluate the initializer at compile time
+// (GCC does) store correctly rounded values, which can differ from a
+// runtime sinf/cosf by one ulp (37 of 1980 entries with glibc).
+struct CornerArcs {
+    static constexpr std::size_t point_count = [] {
+        std::size_t count = 0;
+        for (int segments = min_corner_segments; segments <= max_corner_segments; ++segments) {
+            count += 4 * static_cast<std::size_t>(segments - 1);
+        }
+        return count;
+    }();
+    std::array<std::size_t, max_corner_segments + 1> offset{};
+    std::array<Vec2, point_count> points{};
+};
+
+const CornerArcs& corner_arcs() {
+    static const CornerArcs arcs = [] {
+        CornerArcs result;
+        constexpr std::array starts{
+            std::numbers::pi_v<float>,
+            std::numbers::pi_v<float> * 1.5f,
+            0.0f,
+            std::numbers::pi_v<float> * 0.5f,
+        };
+        std::size_t next = 0;
+        for (int segments = min_corner_segments; segments <= max_corner_segments; ++segments) {
+            result.offset[static_cast<std::size_t>(segments)] = next;
+            for (std::size_t corner = 0; corner < starts.size(); ++corner) {
+                for (int segment = 1; segment < segments; ++segment) {
+                    const float angle = starts[corner] +
+                                        (std::numbers::pi_v<float> * 0.5f) *
+                                            static_cast<float>(segment) /
+                                            static_cast<float>(segments);
+                    result.points[next++] = {std::cos(angle), std::sin(angle)};
+                }
+            }
+        }
+        return result;
+    }();
+    return arcs;
+}
+
 void rounded_outline(Rect bounds, float radius, float scale, std::vector<Vec2>& out) {
     out.clear();
     radius = std::clamp(radius, 0.0f, 0.5f * std::min(bounds.w, bounds.h));
@@ -126,7 +176,7 @@ void rounded_outline(Rect bounds, float radius, float scale, std::vector<Vec2>& 
     const int segments = std::clamp(
         static_cast<int>(std::ceil((std::numbers::pi_v<float> * 0.5f) /
                                    std::max(maximum_step, epsilon))),
-        3, 32);
+        min_corner_segments, max_corner_segments);
     out.reserve(static_cast<std::size_t>((segments + 1) * 4));
     const std::array centers{
         Vec2{bounds.x + radius, bounds.y + radius},
@@ -134,31 +184,18 @@ void rounded_outline(Rect bounds, float radius, float scale, std::vector<Vec2>& 
         Vec2{bounds.x + bounds.w - radius, bounds.y + bounds.h - radius},
         Vec2{bounds.x + radius, bounds.y + bounds.h - radius},
     };
-    constexpr std::array starts{
-        std::numbers::pi_v<float>,
-        std::numbers::pi_v<float> * 1.5f,
-        0.0f,
-        std::numbers::pi_v<float> * 0.5f,
-    };
+    // Exact cardinal endpoints prevent near-duplicate edges when adjacent
+    // corner centers coincide (circles and capsules).
+    constexpr std::array cardinal{Vec2{-1, 0}, Vec2{0, -1}, Vec2{1, 0}, Vec2{0, 1}};
+    const auto& arcs = corner_arcs();
+    const Vec2* arc = arcs.points.data() + arcs.offset[static_cast<std::size_t>(segments)];
     for (std::size_t corner = 0; corner < centers.size(); ++corner) {
-        // Exact cardinal endpoints prevent near-duplicate edges when adjacent
-        // corner centers coincide (circles and capsules).
-        constexpr std::array cardinal{Vec2{-1, 0}, Vec2{0, -1},
-                                       Vec2{1, 0}, Vec2{0, 1}};
-        for (int segment = 0; segment <= segments; ++segment) {
-            if (segment == 0 || segment == segments) {
-                const auto axis = cardinal[(corner + (segment == segments)) % 4];
-                append_unique(out, add(centers[corner], multiply(axis, radius)));
-                continue;
-            }
-            const float angle = starts[corner] +
-                                (std::numbers::pi_v<float> * 0.5f) *
-                                    static_cast<float>(segment) /
-                                    static_cast<float>(segments);
-            append_unique(out,
-                          {centers[corner].x + std::cos(angle) * radius,
-                           centers[corner].y + std::sin(angle) * radius});
+        const auto center = centers[corner];
+        append_unique(out, add(center, multiply(cardinal[corner], radius)));
+        for (int segment = 1; segment < segments; ++segment, ++arc) {
+            append_unique(out, {center.x + arc->x * radius, center.y + arc->y * radius});
         }
+        append_unique(out, add(center, multiply(cardinal[(corner + 1) % 4], radius)));
     }
     remove_duplicate_closure(out);
 }
