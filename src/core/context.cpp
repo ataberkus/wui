@@ -225,8 +225,10 @@ void FrameState::glyphs(const TextRun& run, Vec2 top_left, Color color) {
         bounds.x += top_left.x;
         bounds.y += top_left.y;
         canvas.image(bounds, glyph.texture, glyph.uv, color);
-        if (!check_canvas()) return;
     }
+    // A failed canvas ignores all later paint and keeps its first error, so
+    // one check after the run reports exactly what a per-glyph check would.
+    check_canvas();
 }
 bool FrameState::valid_input(const FrameInput& input) {
     const auto r = input.viewport;
