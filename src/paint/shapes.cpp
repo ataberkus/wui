@@ -27,20 +27,21 @@ constexpr float epsilon = 1.0e-6f;
 
 bool finite(float value) { return std::isfinite(value); }
 bool finite(Vec2 value) { return finite(value.x) && finite(value.y); }
+// Requires x, y, w, h, x + w and y + h to be finite. An infinite or NaN
+// operand always makes a sum infinite or NaN, so the two edge sums being
+// finite already implies that all four components are.
 bool finite(Rect value) {
-    return finite(value.x) && finite(value.y) && finite(value.w) && finite(value.h) &&
-           finite(value.x + value.w) && finite(value.y + value.h);
+    return finite(value.x + value.w) & finite(value.y + value.h);
 }
-bool finite(Color value) {
-    return finite(value.r) && finite(value.g) && finite(value.b) && finite(value.a);
-}
+// Each channel in [0, 1]. These comparisons are false for NaN and for both
+// infinities, so they also establish finiteness. Bitwise & instead of &&
+// evaluates all of them without a branch per comparison.
 bool valid_color(Color value) {
-    return finite(value) && value.r >= 0.0f && value.r <= 1.0f &&
-           value.g >= 0.0f && value.g <= 1.0f && value.b >= 0.0f &&
-           value.b <= 1.0f && value.a >= 0.0f && value.a <= 1.0f;
+    return (value.r >= 0.0f) & (value.r <= 1.0f) & (value.g >= 0.0f) & (value.g <= 1.0f) &
+           (value.b >= 0.0f) & (value.b <= 1.0f) & (value.a >= 0.0f) & (value.a <= 1.0f);
 }
 bool valid_rect(Rect value) {
-    return finite(value) && value.w >= 0.0f && value.h >= 0.0f;
+    return finite(value) & (value.w >= 0.0f) & (value.h >= 0.0f);
 }
 bool equal(Rect a, Rect b) {
     return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
