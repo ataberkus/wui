@@ -166,15 +166,16 @@ Result<std::vector<std::size_t>> TextService::grapheme_offsets(std::string_view 
     }
 }
 
-std::size_t RunKeyHash::operator()(RunKeyView key) const noexcept {
-    auto value = std::hash<std::string_view>{}(key.text);
+std::size_t hash_run_key(std::string_view text, std::string_view language, FontRole role,
+                         std::uint32_t physical_ppem, float scale) noexcept {
+    auto value = std::hash<std::string_view>{}(text);
     const auto combine = [&value](std::size_t part) {
         value ^= part + static_cast<std::size_t>(0x9e3779b9U) + (value << 6) + (value >> 2);
     };
-    combine(std::hash<std::string_view>{}(key.language));
-    combine(static_cast<std::size_t>(key.role));
-    combine(key.physical_ppem);
-    combine(std::bit_cast<std::uint32_t>(key.scale));
+    combine(std::hash<std::string_view>{}(language));
+    combine(static_cast<std::size_t>(role));
+    combine(physical_ppem);
+    combine(std::bit_cast<std::uint32_t>(scale));
     return value;
 }
 
@@ -227,7 +228,10 @@ Result<std::shared_ptr<const TextRun>> TextService::shape(const ShapeRequest& re
             return *error;
         }
         const auto ppem = std::get<std::uint32_t>(size_result);
-        const RunKeyView lookup{request.text, request.language, request.role, ppem, request.scale};
+        const auto hash = hash_run_key(request.text, request.language, request.role, ppem,
+                                       request.scale);
+        const RunKeyView lookup{request.text, request.language, request.role, ppem,
+                                request.scale, hash};
         if (const auto found = runs_.find(lookup); found != runs_.end()) {
             // A hit is a use: move the entry to the most recent end.
             lru_.splice(lru_.begin(), lru_, found->second);
@@ -256,7 +260,7 @@ Result<std::shared_ptr<const TextRun>> TextService::shape(const ShapeRequest& re
         }
 
         RunKey key{std::string(request.text), std::string(request.language), request.role,
-                   ppem, request.scale};
+                   ppem, request.scale, hash};
         auto run = std::make_shared<TextRun>();
         run->baseline = static_cast<float>(baseline);
         run->height = static_cast<float>(height);
