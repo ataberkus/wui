@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 
 namespace wui::detail {
 
@@ -160,10 +161,23 @@ inline Color tab_track(const Theme& theme, bool enabled) {
 }
 inline Color disabled_ink(const Theme& theme) { return mix(theme.panel, theme.secondary, 0.6f); }
 inline Color selection_fill(const Theme& theme) { return mix(field_fill(theme, true), theme.accent, 0.4f); }
-// Canvas::shadow needs sigma*scale in [0.5, 32] physical pixels.
+// Canvas::shadow needs sigma*scale in [0.5, 32] physical pixels, with the
+// product rounded to float. The clamp bounds 0.5/scale and 32/scale are
+// rounded quotients whose product with the scale can land one float outside
+// that range (0.49999997 for about one in seven scales below 1/16), so an
+// out-of-range result steps one float at a time back into it. One step
+// suffices for every positive scale at which some finite sigma is accepted;
+// at subnormal scales below 0.5/FLT_MAX none is, and the bound stays infinite.
+inline float shadow_sigma(float scale, float sigma) {
+    float result = std::clamp(sigma, 0.5f / scale, 32.0f / scale);
+    for (int step = 0; step < 4 && std::isfinite(result) && result * scale < 0.5f; ++step)
+        result = std::nextafter(result, std::numeric_limits<float>::infinity());
+    for (int step = 0; step < 4 && std::isfinite(result) && result * scale > 32.0f; ++step)
+        result = std::nextafter(result, 0.0f);
+    return result;
+}
 inline float shadow_sigma(const FrameState& frame, float sigma) {
-    const float scale = frame.scale > 0.0f ? frame.scale : 1.0f;
-    return std::clamp(sigma, 0.5f / scale, 32.0f / scale);
+    return shadow_sigma(frame.scale > 0.0f ? frame.scale : 1.0f, sigma);
 }
 
 // Elevation of a raised popup sheet, matching the dropdown menu: a cached soft

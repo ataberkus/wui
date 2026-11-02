@@ -7,10 +7,11 @@
 
 namespace wui::detail {
 // Optional elevation of a panel sheet, drawn at close with the measured
-// bounds: a cached soft shadow (Canvas::shadow, offset downward) below the
-// sheet in the clip current at open, and a 1px hairline (Canvas::border)
-// above the children. An elevated panel (either part present) clips its
-// sheet and hairline to its bounds, so their straight edges stay crisp.
+// bounds: a cached soft shadow (CanvasAccess::decorative_shadow, offset
+// downward) below the sheet in the clip current at open, and a 1px hairline
+// (Canvas::border) above the children. An elevated panel (either part
+// present) clips its sheet and hairline to its bounds, so their straight
+// edges stay crisp.
 struct PanelElevation {
     Color shadow{0, 0, 0, 0};   // alpha 0: no shadow
     float shadow_sigma = 0;     // logical; sigma * scale must lie in [0.5, 32]
@@ -32,6 +33,13 @@ struct CanvasAccess {
     // Same as status().has_value(), without building an optional Error.
     static bool failed(const Canvas&) noexcept;
     static void abort(Canvas&) noexcept;
+    // Canvas::shadow for a shadow the library adds on its own (menu, tooltip
+    // and popup elevation). When it cannot be produced for a capacity reason
+    // (a physical radius or texture beyond the cache bounds, no room in the
+    // texture store, a full cache whose entries are all in use) it is skipped,
+    // recording nothing, and the canvas stays healthy. Invalid input fails the
+    // canvas and std::bad_alloc propagates, as with Canvas::shadow.
+    static void decorative_shadow(Canvas&, Rect bounds, float radius, float sigma, Color color);
     // Reserve ordering and a semantic at open; finalize only the background at
     // close. No callback replay or mutation of an already published packet.
     static PanelMark open_panel(Canvas&, Id, std::string_view title,
