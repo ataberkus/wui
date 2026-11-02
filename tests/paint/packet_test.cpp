@@ -354,8 +354,9 @@ TEST_CASE("packet validation flags every nonfinite float and stray index at any 
                             std::numeric_limits<float>::denorm_min(), -0.0f, 0.0f, 1.5f};
     const std::array nonfinite{nan, -nan, inf, -inf, std::bit_cast<float>(0x7f800001u),
                                std::bit_cast<float>(0xff800000u | 0x123u)};
-    // Vertex counts cover whole two-vertex steps and a remaining vertex.
-    for (std::size_t count = 3; count <= 7; ++count) {
+    // Vertex counts cover one and two whole four-vertex steps and every
+    // remainder.
+    for (std::size_t count = 3; count <= 11; ++count) {
         auto packet = triangle_packet();
         packet.vertices.resize(count, packet.vertices[0]);
         CHECK_FALSE(wui::validate_packet(packet).has_value());
@@ -380,8 +381,8 @@ TEST_CASE("packet validation flags every nonfinite float and stray index at any 
             }
         }
     }
-    // Index counts cover eight- and four-index steps and every tail length.
-    for (std::uint32_t count = 3; count <= 30; count += 3) {
+    // Index counts cover sixteen- and four-index steps and every tail length.
+    for (std::uint32_t count = 3; count <= 51; count += 3) {
         auto packet = triangle_packet();
         packet.vertices.resize(5, packet.vertices[0]);
         packet.indices.assign(count, 4); // the last vertex
