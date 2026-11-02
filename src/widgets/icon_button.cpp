@@ -27,15 +27,17 @@ bool emit_icon_button(FrameState& frame, std::string_view key, std::string_view 
         behavior = frame.interaction.button(id, hit, options.enabled && visible(hit));
         track_feedback(*state, hit, behavior, options.enabled);
         animate(frame, *state, behavior, false);
-        paint_surface(frame, row, button_fill(theme, *state, behavior, options.enabled),
-                      behavior.focused, theme, options.invalid);
+        const Color fill = button_fill(theme, *state, behavior, options.enabled);
+        paint_surface(frame, row, fill, behavior.focused, theme, options.invalid);
         if (frame.check_canvas()) {
             const float padding = std::min(theme.gap, row.w * 0.25f);
             const float side = std::max(0.0f, std::min(row.h - 2 * padding,
                                                        row.w - 2 * padding));
             if (side > 0) frame.canvas.image({row.x + (row.w - side) * 0.5f,
                                               row.y + (row.h - side) * 0.5f, side, side},
-                                             image, {0, 0, 1, 1}, theme.text);
+                                             image, {0, 0, 1, 1},
+                                             options.enabled ? readable_ink(theme, fill)
+                                                             : disabled_ink(theme));
         }
         if (frame.check_canvas())
             frame.canvas.semantic(id, Role::button, label, row, options.enabled,

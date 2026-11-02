@@ -132,6 +132,18 @@ Frame::ChoiceScope Frame::begin_choices(std::string_view key, std::string_view l
         widget->bounds = intersect(bounds, frame.clip());
         widget->enabled = options.enabled;
         if (frame.error) return ChoiceScope{};
+        if (kind == ChoiceKind::tabs) {
+            // Tabs are a segmented control: one track per group, a thumb per
+            // selected or hovered cell, and one group ring when invalid.
+            detail::WidgetClip clip(frame, widget->bounds);
+            if (frame.check_canvas()) {
+                frame.canvas.rounded_rect(bounds, theme.control_radius,
+                                          detail::tab_track(theme, options.enabled));
+                if (options.invalid)
+                    frame.canvas.border(bounds, theme.control_radius, 2.0f, detail::invalid_ink(theme));
+            }
+            if (!frame.check_canvas()) return ChoiceScope{};
+        }
         const auto first = frame.row_rects.size();
         if (horizontal) {
             frame.choice_columns.assign(count, Column{ColumnKind::share, 1});
@@ -235,34 +247,68 @@ bool Frame::ChoiceScope::option(std::size_t index, std::string_view label,
             const bool selected = selected_ == index;
             if (selected) selected_id_ = id;
             detail::animate(frame, *state, behavior, selected);
-            const Color fill = kind_ == ChoiceKind::radio
-                ? detail::mix(theme_.panel, theme_.control,
-                              behavior.held ? 1.0f : state->hover.value())
-                : detail::mix(theme_.control, theme_.accent, state->selection.value());
-            detail::paint_surface(frame, row, fill, behavior.focused, theme_, invalid_);
-            if (!frame.check_canvas()) return behavior.activated;
-            float label_x = row.x + theme_.gap;
+            const float hover = enabled_ ? state->hover.value() : 0.0f;
+            const float press = behavior.held ? 1.0f : hover;
+            const float sel = state->selection.value();
             if (kind_ == ChoiceKind::radio) {
+                detail::paint_surface(frame, row, detail::mix(theme_.panel, theme_.control, press),
+                                      behavior.focused, theme_, invalid_);
+                if (!frame.check_canvas()) return behavior.activated;
                 const float size = std::min(theme_.control_height * 0.5f,
                                             std::min(row.h, row.w) * 0.5f);
-                const Rect circle{label_x, row.y + (row.h - size) * 0.5f, size, size};
-                frame.canvas.rounded_rect(circle, size * 0.5f,
-                                          selected ? theme_.accent : theme_.secondary);
-                const auto inner = detail::inset(circle, 2);
-                frame.canvas.rounded_rect(inner, inner.w * 0.5f, theme_.control);
-                if (selected) {
-                    const auto dot = detail::inset(circle, 5);
-                    frame.canvas.rounded_rect(dot, dot.w * 0.5f, theme_.accent);
+                const Rect circle{row.x + theme_.gap, row.y + (row.h - size) * 0.5f, size, size};
+                const Color mark = theme_.accent;
+                const Color edge = enabled_
+                    ? detail::mix(detail::outline_ink(theme_), theme_.secondary, 0.5f * press)
+                    : detail::mix(theme_.panel, detail::outline_ink(theme_), 0.5f);
+                const Color well = enabled_
+                    ? detail::mix(detail::field_fill(theme_, true), mark,
+                                  behavior.held ? 0.28f : hover * 0.16f)
+                    : detail::field_fill(theme_, false);
+                const Color dot = enabled_ ? detail::readable_ink(theme_, mark) : theme_.secondary;
+                frame.canvas.rounded_rect(circle, size * 0.5f, detail::mix(edge, mark, sel));
+                // The well shrinks into the centre dot as the selection settles.
+                const float inner = std::max(0.0f, (size * 0.5f - 1.5f) * (1.0f - sel) +
+                                                       size * 0.21f * sel);
+                const float cx = circle.x + size * 0.5f, cy = circle.y + size * 0.5f;
+                frame.canvas.rounded_rect({cx - inner, cy - inner, inner * 2.0f, inner * 2.0f}, inner,
+                                          detail::mix(well, dot, sel));
+                if (frame.check_canvas()) {
+                    const float label_x = circle.x + size + theme_.gap;
+                    detail::WidgetClip content(frame, row);
+                    if (frame.check_canvas())
+                        frame.glyphs(*run, {label_x, row.y + (row.h - run->height) * 0.5f},
+                                     enabled_ ? theme_.text : detail::disabled_ink(theme_));
                 }
-                label_x += size + theme_.gap;
             } else {
-                label_x = row.x + std::max(0.0f, (row.w - run->width) * 0.5f);
-            }
-            if (frame.check_canvas()) {
-                detail::WidgetClip content(frame, row);
-                if (frame.check_canvas())
-                    frame.glyphs(*run, {label_x, row.y + (row.h - run->height) * 0.5f},
-                                 enabled_ ? theme_.text : theme_.secondary);
+                const Color track = detail::tab_track(theme_, enabled_);
+                const Color idle = enabled_
+                    ? detail::mix(track, theme_.accent, behavior.held ? 0.28f : hover * 0.16f)
+                    : track;
+                const Color thumb = detail::mix(idle, theme_.accent, sel);
+                if (!detail::same_color(thumb, track))
+                    frame.canvas.rounded_rect(detail::inset(row, 3.0f),
+                                              std::max(0.0f, theme_.control_radius - 3.0f), thumb);
+                detail::paint_rings(frame, row, behavior.focused, false, theme_);
+                if (!frame.check_canvas()) return behavior.activated;
+                // Labels keep the full padding when they fit; a label that is a
+                // little too wide may use the padding down to 5px (2px inside
+                // the thumb) before it is clipped.
+                const float full_pad = std::min(theme_.gap, row.w * 0.25f);
+                const float pad = std::clamp((row.w - run->width) * 0.5f,
+                                             std::min(5.0f, full_pad), full_pad);
+                const Rect content{row.x + pad, row.y, std::max(0.0f, row.w - 2.0f * pad), row.h};
+                detail::WidgetClip label_clip(frame, intersect(content, hit));
+                if (frame.check_canvas()) {
+                    const Color ink = enabled_
+                        ? detail::pick_ink(detail::mix(theme_.secondary, theme_.text,
+                                                       std::max(press, sel)),
+                                           theme_.canvas, thumb)
+                        : detail::mix(detail::disabled_ink(theme_), theme_.secondary, sel);
+                    frame.glyphs(*run, {content.x + detail::align_offset(Align::center, content.w,
+                                                                         run->width),
+                                        row.y + (row.h - run->height) * 0.5f}, ink);
+                }
             }
             if (frame.check_canvas()) {
                 if (selected && !frame.copy_label(label)) return behavior.activated;

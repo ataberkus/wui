@@ -221,8 +221,8 @@ void FrameState::paint_text_input(Id id, Rect bounds, const Theme& theme, Behavi
     {
         WidgetClip clip(*this, intersect(bounds, this->clip()));
         if (!check_canvas()) return;
-        paint_surface(*this, bounds, button_fill(theme, widget, behavior, enabled),
-                      behavior.focused, theme, invalid);
+        const float hover = enabled ? (behavior.held ? 1.0f : widget.hover.value()) : 0.0f;
+        paint_field(*this, bounds, theme, hover, behavior.focused, enabled, invalid);
         if (!check_canvas()) return;
         WidgetClip text_clip(*this, content);
         if (!check_canvas()) return;
@@ -232,10 +232,11 @@ void FrameState::paint_text_input(Id id, Rect bounds, const Theme& theme, Behavi
             const auto to = shape(display.substr(0, std::max(editor->caret, editor->anchor)), FontRole::body);
             if (!from || !to) return;
             const Rect selected{content.x + from->width, text_y, to->width - from->width, run->height};
-            canvas.rounded_rect(selected, 0, theme.accent);
+            canvas.rounded_rect(selected, 2, selection_fill(theme));
             if (!check_canvas()) return;
         }
-        glyphs(*run, {content.x, text_y}, display.empty() || !enabled ? theme.secondary : theme.text);
+        glyphs(*run, {content.x, text_y},
+               !enabled ? disabled_ink(theme) : display.empty() ? theme.secondary : theme.text);
         if (!check_canvas()) return;
         if (focused) {
             const auto caret_run = shape(display.substr(0, std::min(editor->caret, display.size())), FontRole::body);

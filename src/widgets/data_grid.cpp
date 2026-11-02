@@ -189,83 +189,111 @@ GridResult emit_data_grid(FrameState& frame, std::string_view key, std::string_v
     Behavior behavior = drag.behavior;
     behavior.focused = frame.interaction.focused() == id && options.enabled;
     track_feedback(*state, hit, behavior, options.enabled);
-    const Color line_ink = mix(theme.control, theme.text, 0.18f);
-    const Color ink = options.enabled ? theme.text : theme.secondary;
+    const Color well = field_fill(theme, true);
+    const Color line_ink = mix(well, theme.text, 0.14f);
+    const Color ink = options.enabled ? theme.text : disabled_ink(theme);
     const std::size_t first = static_cast<std::size_t>(std::floor(offset / row_height));
     const std::size_t last = std::min(rows, static_cast<std::size_t>(std::ceil((offset + view) / row_height)));
     {
         WidgetClip clip(frame, hit);
         if (!frame.check_canvas()) return result;
-        paint_surface(frame, box, theme.control, behavior.focused, theme, options.invalid);
+        // Field language: recessed well, header and body clipped inside the
+        // rings, and the rings painted last so square selection bands never
+        // cover their rounded corners.
+        frame.canvas.rounded_rect(box, theme.control_radius, field_fill(theme, options.enabled));
+        const Rect inner = ring_inner(box, behavior.focused, options.invalid, true);
         if (!frame.check_canvas()) return result;
+        {
+            WidgetClip inner_clip(frame, intersect(inner, hit));
+            if (!frame.check_canvas()) return result;
 
-        // Header: hover/press tint, title, sort triangle, column separator.
-        for (std::size_t i = 0; i < columns.size() && frame.check_canvas(); ++i) {
-            const Rect cell{column_left(i), box.y, grid->widths[i], header_height};
-            if (cell.x >= box.x + box.w || cell.x + cell.w <= box.x) continue;
-            const bool sorted = sort.direction != SortDirection::none && sort.column == i;
-            if (i == header_focus) frame.canvas.border(inset(cell, 2), theme.control_radius * 0.5f, 2, theme.accent);
-            const auto title = columns[i].title.empty() ? nullptr : frame.shape(columns[i].title, FontRole::body);
-            if (title) {
-                const float room = std::max(0.0f, cell.w - pad * 2 - (sorted ? 12.0f : 0.0f));
-                WidgetClip text_clip(frame, intersect({cell.x + pad, cell.y, room, cell.h}, hit));
-                if (frame.check_canvas())
-                    frame.glyphs(*title, {cell.x + pad, cell.y + (cell.h - title->height) * 0.5f}, theme.secondary);
-            }
-            if (sorted) {
-                const float x = cell.x + cell.w - pad - 8, y = cell.y + cell.h * 0.5f;
-                const bool up = sort.direction == SortDirection::ascending;
-                const std::array<Vec2, 3> arrow = up
-                    ? std::array<Vec2, 3>{{{x, y + 3}, {x + 4, y - 3}, {x + 8, y + 3}}}
-                    : std::array<Vec2, 3>{{{x, y - 3}, {x + 8, y - 3}, {x + 4, y + 3}}};
-                frame.canvas.convex(arrow, theme.secondary);
-            }
-            const float right = cell.x + cell.w - 0.5f;
-            const std::array<Vec2, 2> separator{{{right, cell.y + cell.h * 0.25f}, {right, cell.y + cell.h * 0.75f}}};
-            frame.canvas.line(separator, 1, line_ink);
-        }
-        const std::array<Vec2, 2> rule{{{box.x, box.y + header_height}, {box.x + box.w, box.y + header_height}}};
-        frame.canvas.line(rule, 1, line_ink);
-        if (!frame.check_canvas()) return result;
-
-        WidgetClip body_clip(frame, body_hit);
-        if (!frame.check_canvas()) return result;
-        if (rows == 0 && !options.placeholder.empty()) {
-            if (const auto hint = frame.shape(options.placeholder, FontRole::body))
-                frame.glyphs(*hint, {body.x + pad, body.y + (row_height - hint->height) * 0.5f}, theme.secondary);
-        }
-        const auto pointer = frame.interaction.pointer();
-        for (std::size_t row = first; row < last && frame.check_canvas(); ++row) {
-            const float y = body.y - offset + static_cast<float>(row) * row_height;
-            const Rect band{box.x, y, box.w, row_height};
-            const bool chosen = selected == row;
-            Color row_ink = ink;
-            if (chosen) {
-                frame.canvas.rounded_rect(band, 0, theme.accent);
-                row_ink = check_ink(theme, theme.accent);
-            } else if (enabled && pointer && contains(body_hit, *pointer) && contains(band, *pointer)) {
-                frame.canvas.rounded_rect(band, 0, mix(theme.control, theme.accent, 0.14f));
-            }
-            for (std::size_t column = 0; column < columns.size(); ++column) {
-                const Rect cell{column_left(column), y, grid->widths[column], row_height};
+            // Header: hover/press tint, title, sort triangle, column separator.
+            for (std::size_t i = 0; i < columns.size() && frame.check_canvas(); ++i) {
+                const Rect cell{column_left(i), box.y, grid->widths[i], header_height};
                 if (cell.x >= box.x + box.w || cell.x + cell.w <= box.x) continue;
-                const auto text = cells.text(cells.context, row, column, frame.grid_scratch);
-                if (text.empty()) continue;
-                const auto run = frame.shape(text, FontRole::body);
-                if (!run) return result;
-                WidgetClip text_clip(frame, intersect({cell.x + pad, y, std::max(0.0f, cell.w - pad * 2), row_height},
-                                                      body_hit));
-                if (!frame.check_canvas()) return result;
-                frame.glyphs(*run, {cell.x + pad, y + (row_height - run->height) * 0.5f}, row_ink);
+                const bool sorted = sort.direction != SortDirection::none && sort.column == i;
+                if (i == header_focus) frame.canvas.border(inset(cell, 3), theme.control_radius * 0.5f, 2, theme.focus);
+                const auto title = columns[i].title.empty() ? nullptr : frame.shape(columns[i].title, FontRole::body);
+                if (title) {
+                    const float room = std::max(0.0f, cell.w - pad * 2 - (sorted ? 12.0f : 0.0f));
+                    WidgetClip text_clip(frame, intersect({cell.x + pad, cell.y, room, cell.h}, hit));
+                    if (frame.check_canvas())
+                        frame.glyphs(*title, {cell.x + pad, cell.y + (cell.h - title->height) * 0.5f}, theme.secondary);
+                }
+                if (sorted) {
+                    const float x = cell.x + cell.w - pad - 8, y = cell.y + cell.h * 0.5f;
+                    const bool up = sort.direction == SortDirection::ascending;
+                    const std::array<Vec2, 3> arrow = up
+                        ? std::array<Vec2, 3>{{{x, y + 3}, {x + 4, y - 3}, {x + 8, y + 3}}}
+                        : std::array<Vec2, 3>{{{x, y - 3}, {x + 8, y - 3}, {x + 4, y + 3}}};
+                    frame.canvas.convex(arrow, theme.secondary);
+                }
+                frame.canvas.rounded_rect({cell.x + cell.w - 1.0f, cell.y + cell.h * 0.25f, 1.0f, cell.h * 0.5f},
+                                          0, line_ink);
+            }
+            frame.canvas.rounded_rect({inner.x, box.y + header_height - 1.0f, inner.w, 1.0f}, 0, line_ink);
+            if (!frame.check_canvas()) return result;
+
+            WidgetClip body_clip(frame, intersect(body_hit, inner));
+            if (!frame.check_canvas()) return result;
+            if (rows == 0 && !options.placeholder.empty()) {
+                if (const auto hint = frame.shape(options.placeholder, FontRole::body))
+                    frame.glyphs(*hint, {body.x + pad, body.y + (row_height - hint->height) * 0.5f}, theme.secondary);
+            }
+            const auto pointer = frame.interaction.pointer();
+            // Bands are square, except where they reach the rounded bottom
+            // corners: there the band clips a shape with the rings' inner
+            // radius, so no square corner shows outside the outline.
+            const float bottom = inner.y + inner.h;
+            const float corner = std::max(0.0f, theme.control_radius - (inner.x - box.x));
+            const auto paint_band = [&](Rect band, Color color) {
+                if (corner <= 0.0f || band.y + band.h <= bottom - corner || band.y >= bottom) {
+                    frame.canvas.rounded_rect(band, 0, color);
+                    return;
+                }
+                WidgetClip band_clip(frame, band);
+                const float top = std::min(band.y, bottom - corner) - corner;
+                if (frame.check_canvas())
+                    frame.canvas.rounded_rect({inner.x, top, inner.w, bottom - top}, corner, color);
+            };
+            for (std::size_t row = first; row < last && frame.check_canvas(); ++row) {
+                const float y = body.y - offset + static_cast<float>(row) * row_height;
+                const Rect band{box.x, y, box.w, row_height};
+                const bool chosen = selected == row;
+                Color row_ink = ink;
+                if (chosen && behavior.focused) {
+                    paint_band(band, theme.accent);
+                    row_ink = readable_ink(theme, theme.accent);
+                } else if (chosen) {
+                    paint_band(band, mix(well, theme.accent, 0.32f));
+                } else if (enabled && pointer && contains(body_hit, *pointer) && contains(band, *pointer)) {
+                    paint_band(band, mix(well, theme.accent, 0.12f));
+                }
+                for (std::size_t column = 0; column < columns.size(); ++column) {
+                    const Rect cell{column_left(column), y, grid->widths[column], row_height};
+                    if (cell.x >= box.x + box.w || cell.x + cell.w <= box.x) continue;
+                    const auto text = cells.text(cells.context, row, column, frame.grid_scratch);
+                    if (text.empty()) continue;
+                    const auto run = frame.shape(text, FontRole::body);
+                    if (!run) return result;
+                    WidgetClip text_clip(frame, intersect({cell.x + pad, y, std::max(0.0f, cell.w - pad * 2), row_height},
+                                                          body_hit));
+                    if (!frame.check_canvas()) return result;
+                    frame.glyphs(*run, {cell.x + pad, y + (row_height - run->height) * 0.5f}, row_ink);
+                }
+            }
+            // shortcut: the scroll indicator is not draggable; wheel and keys scroll. Make it a
+            // drag target if pointer-only scrolling of long grids is needed.
+            if (max_offset > 0 && frame.check_canvas()) {
+                // The indicator stops short of the rounded bottom corner.
+                const float travel = std::max(0.0f, bottom - corner * 0.5f - body.y);
+                const float thumb = std::min(travel, std::max(row_height, travel * view / (view + max_offset)));
+                const float y = body.y + (travel - thumb) * (offset / max_offset);
+                frame.canvas.rounded_rect({inner.x + inner.w - 4, y, 3, thumb}, 1.5f, mix(well, theme.text, 0.35f));
             }
         }
-        // shortcut: the scroll indicator is not draggable; wheel and keys scroll. Make it a
-        // drag target if pointer-only scrolling of long grids is needed.
-        if (max_offset > 0 && frame.check_canvas()) {
-            const float thumb = std::max(row_height, view * view / (view + max_offset));
-            const float y = body.y + (view - thumb) * (offset / max_offset);
-            frame.canvas.rounded_rect({box.x + box.w - 5, y, 3, thumb}, 1.5f, mix(theme.control, theme.text, 0.35f));
-        }
+        paint_rings(frame, box, behavior.focused, options.invalid, theme,
+                    field_outline(theme, 0.0f, options.enabled, false));
     }
     if (!frame.check_canvas()) return result;
 

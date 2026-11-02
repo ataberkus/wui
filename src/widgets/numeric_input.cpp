@@ -143,8 +143,8 @@ bool emit_numeric_impl(FrameState& frame, std::string_view key, std::string_view
     {
         WidgetClip clip(frame, hit);
         if (!frame.check_canvas()) return changed;
-        paint_surface(frame, row, button_fill(theme, *state, behavior, options.enabled),
-                      focused, theme, invalid);
+        const float hover = options.enabled ? (behavior.held ? 1.0f : state->hover.value()) : 0.0f;
+        paint_field(frame, row, theme, hover, focused, options.enabled, invalid);
         if (!frame.check_canvas()) return changed;
         WidgetClip text_clip(frame, content);
         if (!frame.check_canvas()) return changed;
@@ -157,11 +157,12 @@ bool emit_numeric_impl(FrameState& frame, std::string_view key, std::string_view
             if (!before || !through) return changed;
             const Rect selected{content.x + before->width, text_y,
                                 through->width - before->width, run->height};
-            frame.canvas.rounded_rect(selected, 0, theme.accent);
+            frame.canvas.rounded_rect(selected, 2, selection_fill(theme));
             if (!frame.check_canvas()) return changed;
         }
         frame.glyphs(*run, {content.x, text_y},
-                     display.empty() || !options.enabled ? theme.secondary
+                     !options.enabled ? disabled_ink(theme)
+                     : display.empty() ? theme.secondary
                      : !valid ? invalid_ink(theme) : theme.text);
         if (!frame.check_canvas()) return changed;
         if (focused) {

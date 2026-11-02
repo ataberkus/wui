@@ -41,6 +41,11 @@ constexpr std::array icon_columns{wui::Column{wui::ColumnKind::fixed, 44},
                                   wui::Column{wui::ColumnKind::fixed, 44},
                                   wui::Column{wui::ColumnKind::share, 1}};
 
+wui::Color blend(wui::Color a, wui::Color b, float t) {
+    return {a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t,
+            a.a + (b.a - a.a) * t};
+}
+
 wui::WidgetOptions with(wui::WidgetOptions options, wui::Variant variant) {
     options.variant = variant;
     return options;
@@ -179,6 +184,13 @@ void build_diagnostics(wui::Frame& ui, GalleryState& state, wui::WidgetOptions o
     const auto& metrics = std::get<wui::Theme>(theme);
     ui.text(format(line, "Virtual list: %zu persistent rows", state.row_ids.size()));
     auto list = ui.scroll("rows", 220);
+    // A recessed well behind the rows, in the same colour as field wells.
+    const auto well = list.viewport();
+    if (well.w > 0 && well.h > 0) // a live scope means the frame is usable, so canvas() cannot throw
+        ui.canvas().rounded_rect(well, metrics.control_radius,
+                                 blend(metrics.panel, metrics.canvas, 0.6f));
+    auto row_options = with(options, wui::Variant::quiet);
+    row_options.label_align = wui::Align::start;
     // Rows are fixed-height buttons; the pitch includes the flow gap.
     const float pitch = metrics.control_height + metrics.gap;
     auto range = wui::visible_rows(state.row_ids.size(), pitch, list.offset(), list.viewport().h);
@@ -191,7 +203,7 @@ void build_diagnostics(wui::Frame& ui, GalleryState& state, wui::WidgetOptions o
                                                 state.row_ids[i], 16);
         if (error != std::errc{}) return;
         ui.button({key.data(), static_cast<std::size_t>(end - key.data())},
-                  format(line, "Row %zu", i + 1), with(options, wui::Variant::quiet));
+                  format(line, "Row %zu", i + 1), row_options);
     }
     if (last < state.row_ids.size())
         ui.spacer(static_cast<float>(state.row_ids.size() - last) * pitch - metrics.gap);

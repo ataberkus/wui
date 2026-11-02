@@ -1,7 +1,6 @@
 #include "painter.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <limits>
 
@@ -19,23 +18,28 @@ Behavior begin_dropdown(FrameState& frame, WidgetState& state, Id group, Rect tr
         behavior = frame.interaction.button(group, hit, enabled && visible(hit));
         track_feedback(state, hit, behavior, enabled);
         animate(frame, state, behavior, false);
-        paint_surface(frame, trigger, button_fill(theme, state, behavior, enabled),
-                      behavior.focused, theme, invalid);
+        // The popup opens below on this frame's activation; show the open look now.
+        const bool open = frame.popup.owner == group ||
+                          (behavior.activated && enabled && frame.popup.owner == Id{});
+        const float hover = enabled ? (behavior.held ? 1.0f : state.hover.value()) : 0.0f;
+        paint_field(frame, trigger, theme, hover, behavior.focused, enabled, invalid, open);
         if (!frame.check_canvas()) return behavior;
         const auto shown = selected_label.empty() ? group_label : selected_label;
         const auto run = frame.shape(shown, FontRole::body);
         if (run) {
-            WidgetClip content(frame, inset(trigger, std::min(theme.gap, trigger.w * 0.25f)));
+            // The label stops short of the chevron instead of running under it.
+            Rect content = inset(trigger, std::min(theme.gap, trigger.w * 0.25f));
+            content.w = std::max(0.0f, content.w - 16.0f);
+            WidgetClip label_clip(frame, content);
             if (frame.check_canvas())
                 frame.glyphs(*run, {trigger.x + theme.gap,
                                    trigger.y + (trigger.h - run->height) * 0.5f},
-                             enabled ? theme.text : theme.secondary);
+                             enabled ? theme.text : disabled_ink(theme));
         }
-        if (frame.check_canvas()) {
-            const float x = trigger.x + trigger.w - theme.gap - 10;
-            const float y = trigger.y + trigger.h * 0.5f;
-            const std::array<Vec2, 3> arrow{{{x, y - 3}, {x + 10, y - 3}, {x + 5, y + 3}}};
-            frame.canvas.convex(arrow, enabled ? theme.text : theme.secondary);
+        if (frame.check_canvas() && trigger.w >= 34.0f) {
+            const Color ink = !enabled ? disabled_ink(theme) : open ? theme.text : theme.secondary;
+            paint_chevron(frame, trigger.x + trigger.w - theme.gap - 6.0f,
+                          trigger.y + trigger.h * 0.5f, 10.0f, ink);
         }
     }
     if (!frame.check_canvas()) return behavior;

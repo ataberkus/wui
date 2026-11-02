@@ -73,24 +73,41 @@ bool emit_slider_impl(FrameState& frame, std::string_view key, std::string_view 
     {
         WidgetClip clip(frame, hit);
         if (!frame.check_canvas()) return changed;
-        paint_surface(frame, control, button_fill(theme, *state, drag.behavior, options.enabled),
-                      drag.behavior.focused, theme, options.invalid);
-        frame.canvas.rounded_rect(track, track.h * 0.5f, theme.secondary);
+        // Idle sliders paint no box: rail, progress and thumb carry the control.
+        const float hover = options.enabled
+            ? std::max(state->hover.value(), state->selection.value()) : 0.0f;
+        const Color surface = mix(theme.panel, theme.control, hover);
+        if (hover > 0.0f) frame.canvas.rounded_rect(control, theme.control_radius, surface);
+        paint_rings(frame, control, drag.behavior.focused, options.invalid, theme);
+        const float cy = control.y + control.h * 0.5f;
+        const Color rail = options.enabled ? track_ink(theme)
+                                           : mix(theme.panel, track_ink(theme), 0.5f);
+        frame.canvas.rounded_rect({track.x, cy - 2.0f, track.w, 4.0f}, 2.0f, rail);
         const double fraction = std::clamp((static_cast<double>(value) - lower) / (upper - lower), 0.0, 1.0);
-        const Rect progress{track.x, track.y, static_cast<float>(track.w * fraction), track.h};
-        frame.canvas.rounded_rect(progress, progress.h * 0.5f, theme.accent);
-        const float radius = std::max(0.0f, std::min(8.0f, control.h * 0.5f - 3.0f));
-        const Rect thumb{track.x + progress.w - radius, control.y + control.h * 0.5f - radius,
-                         radius * 2, radius * 2};
-        frame.canvas.rounded_rect(thumb, radius,
-                                  mix(theme.control, theme.accent, state->selection.value()));
-        frame.canvas.border(thumb, radius, 1, theme.text);
+        // The thumb travels between fixed limits so its collar never touches
+        // the focus ring, and focus changes never move it.
+        const float radius = std::min(8.0f, control.h * 0.5f - 6.0f);
+        const float collar = radius + 2.0f;
+        const float lo = control.x + 4.0f + collar;
+        const float hi = control.x + control.w - 4.0f - collar;
+        const float cx = lo <= hi
+            ? std::clamp(track.x + static_cast<float>(track.w * fraction), lo, hi)
+            : control.x + control.w * 0.5f;
+        const float progress = std::max(0.0f, std::min(cx, track.x + track.w) - track.x);
+        frame.canvas.rounded_rect({track.x, cy - 2.0f, progress, 4.0f}, 2.0f, theme.accent);
+        if (radius > 1.0f) {
+            frame.canvas.rounded_rect({cx - collar, cy - collar, collar * 2.0f, collar * 2.0f}, collar,
+                                      options.enabled ? mix(surface, theme.accent, state->selection.value())
+                                                      : surface);
+            frame.canvas.rounded_rect({cx - radius, cy - radius, radius * 2.0f, radius * 2.0f}, radius,
+                                      options.enabled ? theme.text : disabled_ink(theme));
+        }
     }
     if (!frame.check_canvas()) return changed;
     {
         WidgetClip clip(frame, intersect({row.x, row.y, row.w, run->height}, frame.clip()));
         if (frame.check_canvas())
-            frame.glyphs(*run, {row.x + pad, row.y}, options.enabled ? theme.text : theme.secondary);
+            frame.glyphs(*run, {row.x + pad, row.y}, options.enabled ? theme.text : disabled_ink(theme));
     }
     if (!frame.check_canvas()) return changed;
     char formatted[64];

@@ -48,20 +48,32 @@ bool emit_checkbox(FrameState& frame, std::string_view key, std::string_view lab
                                : row.y + (row.h - box_size) * 0.5f,
                        box_size, box_size};
         const float selected = state->selection.value();
-        const Color unselected = mix(theme.control, theme.accent, behavior.held ? 0.28f : hover * 0.16f);
-        const Color fill = mix(unselected, options.enabled ? theme.accent : theme.secondary, selected);
-        const Color border = value ? fill : (options.enabled ? theme.secondary
-                                                             : mix(theme.control, theme.secondary, 0.5f));
+        const float press = behavior.held ? 1.0f : hover;
+        const Color mark = theme.accent; // neutral grey when disabled
+        const Color edge = options.enabled
+            ? mix(outline_ink(theme), theme.secondary, 0.5f * press)
+            : mix(theme.panel, outline_ink(theme), 0.5f);
+        const Color well = options.enabled
+            ? mix(field_fill(theme, true), mark, behavior.held ? 0.28f : hover * 0.16f)
+            : field_fill(theme, false);
         const float radius = std::min(theme.control_radius * 0.5f, box_size * 0.5f);
-        frame.canvas.rounded_rect(box, radius, border);
-        frame.canvas.rounded_rect(inset(box, 1.0f), std::max(0.0f, radius - 1.0f), fill);
+        Color inner = mark;
+        if (selected >= 1.0f) {
+            frame.canvas.rounded_rect(box, radius, mark);
+        } else {
+            // 1.5px stacked band: small curves need anti-aliasing on both edges.
+            inner = mix(well, mark, selected);
+            frame.canvas.rounded_rect(box, radius, mix(edge, mark, selected));
+            frame.canvas.rounded_rect(inset(box, 1.5f), std::max(0.0f, radius - 1.5f), inner);
+        }
         if (value && visible(box)) {
             const std::array points{
                 Vec2{box.x + box.w * 0.23f, box.y + box.h * 0.51f},
                 Vec2{box.x + box.w * 0.43f, box.y + box.h * 0.70f},
                 Vec2{box.x + box.w * 0.78f, box.y + box.h * 0.30f},
             };
-            frame.canvas.line(points, std::min(2.0f, box_size * 0.12f), check_ink(theme, fill));
+            frame.canvas.line(points, std::min(2.0f, box_size * 0.12f),
+                              options.enabled ? readable_ink(theme, inner) : theme.secondary);
         }
         if (frame.check_canvas()) {
             const float label_x = stacked ? row.x + padding : box.x + box.w + theme.gap;
@@ -71,7 +83,7 @@ bool emit_checkbox(FrameState& frame, std::string_view key, std::string_view lab
             WidgetClip label_clip(frame, label_bounds);
             if (frame.check_canvas()) {
                 frame.glyphs(*run, {label_bounds.x, label_bounds.y},
-                             options.enabled ? theme.text : theme.secondary);
+                             options.enabled ? theme.text : disabled_ink(theme));
             }
         }
         if (frame.check_canvas()) {
