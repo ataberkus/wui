@@ -1197,6 +1197,36 @@ TEST_CASE("icon button leases its texture and activates with an accessible label
         [icon](const auto& texture) { return texture->handle == icon; }));
 }
 
+TEST_CASE("a canvas failure before a button reports the canvas error and suppresses activation") {
+    auto desc = fixture_desc();
+    const auto textures = desc.textures;
+    constexpr std::array<std::byte, 4> rgba{std::byte{255}, std::byte{255}, std::byte{255},
+                                            std::byte{255}};
+    const auto created = textures->create(1, 1, rgba, wui::AlphaMode::straight);
+    REQUIRE(std::holds_alternative<wui::TextureHandle>(created));
+    const auto icon = std::get<wui::TextureHandle>(created);
+    auto context = make_context(std::move(desc));
+    for (const bool with_icon : {false, true}) {
+        CAPTURE(with_icon);
+        wui::FrameInput input{{0, 0, 400, 300}};
+        input.events = {{wui::EventKind::pointer_down, {20, 20}},
+                        {wui::EventKind::pointer_up, {20, 20}}};
+        auto frame = begin(*context, input);
+        // Custom paint fails the canvas; the widget must not route the click.
+        frame.canvas().push_clip({0, 0, -1, -1});
+        CHECK_FALSE((with_icon ? frame.icon_button("help", "Help", icon)
+                               : frame.button("help", "Help")));
+        auto result = frame.finish();
+        REQUIRE(std::holds_alternative<wui::Error>(result));
+        CHECK(std::get<wui::Error>(result).code == wui::ErrorCode::invalid_argument);
+        CHECK(std::get<wui::Error>(result).message == "Canvas clip must be finite and nonnegative");
+        // The next frame routes normally.
+        auto next = begin(*context, input);
+        CHECK((with_icon ? next.icon_button("help", "Help", icon) : next.button("help", "Help")));
+        finish(next);
+    }
+}
+
 TEST_CASE("tab selection tracks stable values across keyboard activation and reorder") {
     auto context = make_context();
     std::array<wui::Choice<int>, 2> choices{{{10, "First"}, {20, "Second"}}};

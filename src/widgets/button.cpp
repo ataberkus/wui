@@ -5,9 +5,11 @@
 
 namespace wui::detail {
 
+// Canvas checks follow emit_icon_button: before the first paint
+// `frame.error` alone decides, and paint on a failed canvas is ignored, so
+// only the check guarding interaction routing and the final report remain.
 bool emit_button(FrameState& frame, std::string_view key, std::string_view label,
                  WidgetOptions options) {
-    if (!frame.check_canvas()) return false;
     const Id id = frame.keyed_id(key);
     auto* state = frame.register_widget(id);
     if (!state || !frame.copy_label(label)) return false;
@@ -16,7 +18,7 @@ bool emit_button(FrameState& frame, std::string_view key, std::string_view label
     const auto theme = widget_theme(frame, options);
     if (frame.error) return false;
     const Rect row = frame.take(std::max(theme.control_height, run->height + theme.gap));
-    if (frame.error || !frame.check_canvas()) return false;
+    if (frame.error) return false;
     const Rect hit = intersect_rects(row, frame.clip());
     initialize_animation(*state, false);
     Behavior behavior;
@@ -28,20 +30,16 @@ bool emit_button(FrameState& frame, std::string_view key, std::string_view label
         animate(frame, *state, behavior, false);
         const Color fill = button_fill(theme, *state, behavior, options.enabled);
         paint_surface(frame, row, fill, behavior.focused, theme, options.invalid);
-        if (frame.check_canvas()) {
+        {
             const float padding = std::min(theme.gap, row.w * 0.25f);
             const Rect content{row.x + padding, row.y, row.w - 2.0f * padding, row.h};
             WidgetClip label_clip(frame, content);
-            if (frame.check_canvas()) {
-                const float x = content.x + align_offset(options.label_align, content.w, run->width);
-                frame.glyphs(*run, {x, row.y + (row.h - run->height) * 0.5f},
-                             options.enabled ? readable_ink(theme, fill) : disabled_ink(theme));
-            }
+            const float x = content.x + align_offset(options.label_align, content.w, run->width);
+            frame.glyphs(*run, {x, row.y + (row.h - run->height) * 0.5f},
+                         options.enabled ? readable_ink(theme, fill) : disabled_ink(theme));
         }
-        if (frame.check_canvas()) {
-            frame.canvas.semantic(id, Role::button, label, row, options.enabled,
-                                  behavior.focused, false, {}, options.invalid);
-        }
+        frame.canvas.semantic(id, Role::button, label, row, options.enabled,
+                              behavior.focused, false, {}, options.invalid);
     }
     frame.check_canvas();
     return behavior.activated;
