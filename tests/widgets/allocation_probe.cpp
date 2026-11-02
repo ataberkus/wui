@@ -330,10 +330,12 @@ int generic_popup_reuse() {
             counting_semantic = false;
             if (!std::holds_alternative<wui::DrawPacket>(finished)) return 14;
             if (i >= 8) {
-                bool sheet = false;
+                // The untitled root panel is one untitled panel; the open
+                // popup's sheet must be a second one.
+                int untitled_panels = 0;
                 for (const auto& entry : std::get<wui::DrawPacket>(finished)->semantics)
-                    sheet |= entry.role == wui::Role::panel && entry.label.empty();
-                if (!sheet) return 15;
+                    if (entry.role == wui::Role::panel && entry.label.empty()) ++untitled_panels;
+                if (untitled_panels < 2) return 15;
             }
         }
     }
