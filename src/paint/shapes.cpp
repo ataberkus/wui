@@ -1186,14 +1186,14 @@ struct Canvas::Impl {
             return true;
         }
         constexpr std::size_t limit = std::numeric_limits<std::uint32_t>::max();
-        if (glyphs.size() > (limit - vertex_size) / 4 ||
-            glyphs.size() > (limit - index_size) / 6) {
+        if (glyphs.size() > (limit - vertex_size) / 4 || limit - index_size < 2 ||
+            glyphs.size() > (limit - index_size - 2) / 6) {
             return false;
         }
         Vertex* const first_vertex =
             writable(current->vertices, vertex_size, glyphs.size() * 4);
         std::uint32_t* const first_slot =
-            writable(current->indices, index_size, glyphs.size() * 6);
+            writable(current->indices, index_size, glyphs.size() * 6 + 2);
         const auto color = premultiply_valid(tint);
         Vertex* vertex = first_vertex;
         std::uint32_t* index = first_slot;
@@ -1212,8 +1212,11 @@ struct Canvas::Impl {
                 end_mesh(run_first, texture);
             }
         };
-        // Indices of the next quad: two triangles over its four corners.
-        std::array<std::uint32_t, 6> quad{b, b + 1, b + 2, b, b + 2, b + 3};
+        // Indices of the next quad: two triangles over its four corners. All
+        // eight lanes are stored (two 128-bit stores) and advance together;
+        // the last two land in the next quad's slots, or in the two slack
+        // slots made after the run, beyond the logical size.
+        std::array<std::uint32_t, 8> quad{b, b + 1, b + 2, b, b + 2, b + 3, b + 4, b + 5};
         bool invalid = false;
         for (const auto& glyph : glyphs) {
             // Corner coordinates as image() computes them: `low` holds the
@@ -1223,19 +1226,22 @@ struct Canvas::Impl {
             const std::array extent{glyph.bounds.w, glyph.bounds.h, glyph.uv.w, glyph.uv.h};
             std::array<float, 4> high;
             std::uint32_t nonfinite = 0;
-            bool nonnegative = true;
             for (std::size_t k = 0; k < 4; ++k) {
                 high[k] = low[k] + extent[k];
                 nonfinite |= detail::nonfinite_bits(high[k]);
-                nonnegative &= extent[k] >= 0.0f;
             }
-            // valid_rect() of the moved bounds and of the uv.
-            if ((nonfinite & detail::nonfinite_flag) != 0 || !nonnegative) {
+            // valid_rect() of the moved bounds and of the uv. A NaN extent
+            // makes its sum NaN, so the minimum needs to be exact only when
+            // no extent is NaN, and then it is.
+            const float least_size = std::min(extent[0], extent[1]);
+            if ((nonfinite & detail::nonfinite_flag) != 0 ||
+                !(std::min(least_size, std::min(extent[2], extent[3])) >= 0.0f)) {
                 invalid = true;
                 break;
             }
-            // The extents are now known to be nonnegative: not positive is zero.
-            if (!(extent[0] > 0.0f) || !(extent[1] > 0.0f)) {
+            // Both extents are now nonnegative numbers: one is zero exactly
+            // when their minimum is not positive.
+            if (!(least_size > 0.0f)) {
                 continue;
             }
             if (!(glyph.texture == texture)) {
