@@ -291,7 +291,12 @@ bool Frame::ChoiceScope::option(std::size_t index, std::string_view label,
                                               std::max(0.0f, theme_.control_radius - 3.0f), thumb);
                 detail::paint_rings(frame, row, behavior.focused, false, theme_);
                 if (!frame.check_canvas()) return behavior.activated;
-                const float pad = std::min(theme_.gap, row.w * 0.25f);
+                // Labels keep the full padding when they fit; a label that is a
+                // little too wide may use the padding down to 5px (2px inside
+                // the thumb) before it is clipped.
+                const float full_pad = std::min(theme_.gap, row.w * 0.25f);
+                const float pad = std::clamp((row.w - run->width) * 0.5f,
+                                             std::min(5.0f, full_pad), full_pad);
                 const Rect content{row.x + pad, row.y, std::max(0.0f, row.w - 2.0f * pad), row.h};
                 detail::WidgetClip label_clip(frame, intersect(content, hit));
                 if (frame.check_canvas()) {
