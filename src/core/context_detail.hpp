@@ -221,6 +221,9 @@ struct FrameState {
     // True once the owner has been hovered for the tooltip delay; a nonempty
     // message is then queued as the standard text tooltip.
     bool tooltip_for_owner(Id owner, std::string_view message);
+    // Editor and grid state belong to a widget registered this frame:
+    // prune() erases them only together with that widget, so state created
+    // for any other id would never be released.
     EditState* edit_state(Id id);
     bool account_edit_bytes(std::size_t bytes);
     GridState* grid_state(Id id);

@@ -92,8 +92,10 @@ void FrameState::prune() noexcept {
 GridState* FrameState::grid_state(Id id) {
     if (error) return nullptr;
     auto found = grids.find(id.value);
-    if (found == grids.end())
+    if (found == grids.end()) {
+        assert(widgets.contains(id.value) && "grid state needs a registered widget");
         found = grids.try_emplace(id.value, GridState{std::pmr::vector<float>{&memory}}).first;
+    }
     return &found->second;
 }
 WidgetState* FrameState::register_widget(Id id) {
@@ -136,6 +138,7 @@ EditState* FrameState::edit_state(Id id) {
             report(ErrorCode::capacity, "Per-frame widget limit exceeded");
             return nullptr;
         }
+        assert(widgets.contains(id.value) && "editor state needs a registered widget");
         EditState state{std::pmr::string{&memory}, std::pmr::string{&memory},
                         std::pmr::string{&memory}, std::pmr::vector<EditSnapshot>{&memory},
                         std::pmr::vector<EditLine>{&memory}};
