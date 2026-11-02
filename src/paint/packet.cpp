@@ -1,9 +1,9 @@
 #include <wui/draw.hpp>
 
+#include "../core/float_bits.hpp"
 #include "../core/resource_limits.hpp"
 
 #include <array>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -11,20 +11,12 @@
 namespace wui {
 namespace {
 
-// Branchless finiteness. A float is infinite or NaN exactly when its exponent
-// field is all ones. Adding one exponent unit to the isolated exponent field
-// carries into bit 31 only in that case ((0xff + 1) << 23 == 1u << 31; every
-// smaller exponent stays below it), so the flags of many values can be OR-ed
-// together and tested once. The loops below have no data-dependent branches,
-// which keeps them cheap and lets compilers vectorize them; for every value
-// the result is exactly std::isfinite.
-constexpr std::uint32_t exponent_mask = 0x7f800000u;
-constexpr std::uint32_t exponent_unit = 0x00800000u;
-constexpr std::uint32_t nonfinite_flag = 0x80000000u;
+// Finiteness flags (see float_bits.hpp) are OR-ed over whole arrays and
+// tested once. The loops below have no data-dependent branches, which keeps
+// them cheap and lets compilers vectorize them.
+using detail::nonfinite_bits;
+using detail::nonfinite_flag;
 
-std::uint32_t nonfinite_bits(float value) {
-    return (std::bit_cast<std::uint32_t>(value) & exponent_mask) + exponent_unit;
-}
 std::uint32_t nonfinite_bits(Rect value) {
     return nonfinite_bits(value.x) | nonfinite_bits(value.y) | nonfinite_bits(value.w) |
            nonfinite_bits(value.h);

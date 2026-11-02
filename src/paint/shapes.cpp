@@ -1,5 +1,6 @@
 #include <wui/canvas.hpp>
 
+#include "../core/float_bits.hpp"
 #include "canvas_access.hpp"
 #include "shapes_detail.hpp"
 
@@ -28,17 +29,13 @@ constexpr float epsilon = 1.0e-6f;
 
 bool finite(float value) { return std::isfinite(value); }
 bool finite(Vec2 value) { return finite(value.x) && finite(value.y); }
-// Bit 31 is set exactly when `value` is infinite or NaN: one exponent unit
-// added to an all-ones exponent field carries into it (see validate_packet).
-std::uint32_t nonfinite_bit(float value) {
-    return (std::bit_cast<std::uint32_t>(value) & 0x7f800000u) + 0x00800000u;
-}
 // Requires x, y, w, h, x + w and y + h to be finite. An infinite or NaN
 // operand always makes a sum infinite or NaN, so the two edge sums being
 // finite already implies that all four components are. Tested branch-free.
 bool finite(Rect value) {
-    return ((nonfinite_bit(value.x + value.w) | nonfinite_bit(value.y + value.h)) &
-            0x80000000u) == 0;
+    return ((detail::nonfinite_bits(value.x + value.w) |
+             detail::nonfinite_bits(value.y + value.h)) &
+            detail::nonfinite_flag) == 0;
 }
 // Each channel in [0, 1]. These comparisons are false for NaN and for both
 // infinities, so they also establish finiteness. Bitwise & instead of &&
@@ -135,7 +132,7 @@ constexpr int max_corner_segments = 32;
 // cos no longer run for every corner point of every rounded shape. The table
 // is built once; compilers that evaluate the initializer at compile time
 // (GCC does) store correctly rounded values, which can differ from a
-// runtime sinf/cosf by one ulp (37 of 1980 entries with glibc).
+// runtime sinf/cosf by one ulp (37 of the 3960 coordinates with glibc).
 struct CornerArcs {
     static constexpr std::size_t point_count = [] {
         std::size_t count = 0;
