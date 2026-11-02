@@ -89,15 +89,23 @@ void FrameState::close_scroll(std::uint64_t expected, std::size_t depth, Id id,
         report(ErrorCode::unbalanced_scope, "Scroll scopes must close in reverse opening order", true);
         return;
     }
-    const float content_height = stack.back().flow.used_height();
-    const Rect visible_viewport = stack.back().clip;
-    canvas.pop_clip();
-    stack.pop_back();
-    if (!check_canvas()) return;
-    (void)take(viewport.h);
-    if (error) return;
-    const float max_offset = std::max(0.0f, content_height - viewport.h);
-    widgets.find(id.value)->second.scroll_offset =
-        settle_scroll(visible_viewport, current_offset, max_offset);
+    try {
+        const float content_height = stack.back().flow.used_height();
+        const Rect visible_viewport = stack.back().clip;
+        // Canvas::pop_clip builds (and allocates) an error when the clip stack
+        // is unbalanced, e.g. after the caller popped this area's clip itself.
+        canvas.pop_clip();
+        stack.pop_back();
+        if (!check_canvas()) return;
+        (void)take(viewport.h);
+        if (error) return;
+        const float max_offset = std::max(0.0f, content_height - viewport.h);
+        widgets.find(id.value)->second.scroll_offset =
+            settle_scroll(visible_viewport, current_offset, max_offset);
+    } catch (const std::bad_alloc&) {
+        report(ErrorCode::capacity, "Scroll finalization allocation failed");
+    } catch (...) {
+        report(ErrorCode::invalid_frame, "Scroll cleanup failed");
+    }
 }
 } // namespace wui::detail

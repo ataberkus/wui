@@ -32,6 +32,14 @@ struct FlowAccess {
         out = Rect{flow.area_.x, y, flow.area_.w, height};
         return true;
     }
+    // The message of the invalid_argument error Flow::take returns for a
+    // height that take() above refuses. A static string: reporting a refusal
+    // this way allocates nothing, which noexcept scope closers rely on.
+    static const char* refusal(const Flow& flow, float height) noexcept {
+        if (!flow.valid_ || !std::isfinite(height) || height < 0.0f)
+            return "flow dimensions and gap must be finite and nonnegative";
+        return "flow dimensions overflow";
+    }
     // Flow::used_height, inline.
     static float used_height(const Flow& flow) noexcept { return flow.used_height_; }
 };

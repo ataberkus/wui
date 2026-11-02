@@ -53,8 +53,14 @@ bool FrameState::report_unusable() {
     report(ErrorCode::invalid_frame, "Frame no longer belongs to an active Context", true);
     return false;
 }
-bool FrameState::report_canvas_failure() {
-    if (auto failed = CanvasAccess::status(canvas)) report(std::move(*failed));
+bool FrameState::report_canvas_failure() noexcept {
+    // Copying the canvas error allocates its message. If that fails, the
+    // frame is still rejected, with the allocation failure as its error.
+    try {
+        if (auto failed = CanvasAccess::status(canvas)) report(std::move(*failed));
+    } catch (...) {
+        report(ErrorCode::capacity, "Canvas error could not be copied");
+    }
     return !error;
 }
 void FrameState::abort() noexcept {
@@ -134,10 +140,8 @@ EditState* FrameState::edit_state(Id id) {
     if (error) return nullptr;
     auto found = edits.find(id.value);
     if (found == edits.end()) {
-        if (count == max_widgets) {
-            report(ErrorCode::capacity, "Per-frame widget limit exceeded");
-            return nullptr;
-        }
+        // Like grid_state, no widget limit check: every caller registered this
+        // id first, and register_widget already counted it against max_widgets.
         assert(widgets.contains(id.value) && "editor state needs a registered widget");
         EditState state{std::pmr::string{&memory}, std::pmr::string{&memory},
                         std::pmr::string{&memory}, std::pmr::vector<EditSnapshot>{&memory},
@@ -186,15 +190,15 @@ void FrameState::note_diagnostic(ErrorCode code, std::string_view message) {
     if (error || diagnostics.size() == 64) return;
     diagnostics.push_back({code, std::string(message)});
 }
-Rect FrameState::refuse_take(float height) {
+Rect FrameState::refuse_take(float height) noexcept {
     if (error) return {};
-    // A refused take leaves the flow unchanged; the checked call says why.
-    auto result = stack.back().flow.take(height);
-    if (auto* failed = std::get_if<Error>(&result)) {
-        report(failed->code, failed->message.c_str(), true);
-        return {};
-    }
-    return std::get<Rect>(result);
+    // A refused take leaves the flow unchanged. Report the error Flow::take
+    // would return without building it (its message would allocate).
+    auto& flow = stack.back().flow;
+    Rect row;
+    if (FlowAccess::take(flow, height, row)) return row;
+    report(ErrorCode::invalid_argument, FlowAccess::refusal(flow, height), true);
+    return {};
 }
 std::shared_ptr<const TextRun> FrameState::shape(std::string_view value, FontRole role, float size) {
     if (error) return {};

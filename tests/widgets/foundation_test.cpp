@@ -680,6 +680,58 @@ TEST_CASE("widget capacity includes panels and text and resets each frame") {
     CHECK(packet->semantics.size() == 2);
 }
 
+TEST_CASE("an editor or a grid can be the last widget the per-frame limit admits") {
+    enum class Last { button, text_input, text_area, numeric_input, data_grid };
+    constexpr std::array<const char*, 5> names{
+        "button", "text_input", "text_area", "numeric_input", "data_grid"};
+    for (const auto last : {Last::button, Last::text_input, Last::text_area,
+                            Last::numeric_input, Last::data_grid}) {
+        const std::string name = names[static_cast<std::size_t>(last)];
+        CAPTURE(name);
+        auto desc = fixture_desc();
+        desc.max_widgets = 3;
+        auto context = make_context(std::move(desc));
+        std::string text = "x";
+        double number = 1;
+        std::optional<std::size_t> selected;
+        wui::GridSort sort;
+        const std::array<wui::GridColumn, 1> columns{{{"A", 120}}};
+        const auto cell = [](std::size_t, std::size_t) { return std::string("cell"); };
+        // `before` buttons, then the widget under test.
+        const auto emit = [&](std::size_t before) {
+            auto frame = begin(*context);
+            for (std::size_t i = 0; i < before; ++i)
+                frame.button("button-" + std::to_string(i), "Button");
+            switch (last) {
+            case Last::button: frame.button("last", "Last"); break;
+            case Last::text_input: frame.text_input("last", "Last", text); break;
+            case Last::text_area: frame.text_area("last", "Last", text, 80); break;
+            case Last::numeric_input: frame.numeric_input("last", "Last", number, 0.0, 9.0); break;
+            case Last::data_grid:
+                frame.data_grid("last", "Last", columns, 3, cell, selected, sort, 120);
+                break;
+            }
+            return frame.finish();
+        };
+        // Exactly max_widgets widgets: admitted on every frame, the first
+        // one (which creates editor or grid state) included.
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            auto admitted = emit(2);
+            CHECK(std::holds_alternative<wui::DrawPacket>(admitted));
+            if (const auto* packet = std::get_if<wui::DrawPacket>(&admitted))
+                CHECK((*packet)->semantics.size() >= 3);
+        }
+        // One widget more is still refused.
+        auto refused = emit(3);
+        REQUIRE(std::holds_alternative<wui::Error>(refused));
+        CHECK(std::get<wui::Error>(refused).code == wui::ErrorCode::capacity);
+        CHECK(std::get<wui::Error>(refused).message == "Per-frame widget limit exceeded");
+        CHECK(std::holds_alternative<wui::DrawPacket>(emit(2)));
+        CHECK(text == "x");
+        CHECK(number == 1);
+    }
+}
+
 TEST_CASE("retained allocation capacity becomes available after 120 absent completed frames") {
     auto desc = fixture_desc();
     desc.max_retained_bytes = 4096;
@@ -841,6 +893,146 @@ TEST_CASE("a hidden text input keeps its caret until its widget expires") {
     focus();
     CHECK(step({typed("Y")}));
     CHECK(value == "XoneY");
+}
+
+namespace {
+enum class EditorKind { text_input, text_area, numeric_input };
+constexpr std::array<EditorKind, 3> editor_kinds{
+    EditorKind::text_input, EditorKind::text_area, EditorKind::numeric_input};
+const char* editor_name(EditorKind kind) {
+    switch (kind) {
+    case EditorKind::text_input: return "text_input";
+    case EditorKind::text_area: return "text_area";
+    default: return "numeric_input";
+    }
+}
+wui::InputEvent control_key(wui::Key key) {
+    auto event = key_event(wui::EventKind::key_down, key);
+    event.control = true;
+    return event;
+}
+// One editor of the given kind with a two-byte label, driven one frame per
+// step. `draft` is the editor's displayed value after the last finished frame.
+struct EditorRig {
+    explicit EditorRig(EditorKind editor) : kind(editor) {}
+    EditorKind kind;
+    std::unique_ptr<wui::Context> context = make_context();
+    std::string text;
+    double number = 0;
+    std::string draft;
+    // Runs one frame; true when it finished with a packet.
+    bool step(std::vector<wui::InputEvent> events) {
+        wui::FrameInput input{{0, 0, 400, 300}};
+        input.events = std::move(events);
+        auto frame = begin(*context, input);
+        auto role = wui::Role::text_input;
+        if (kind == EditorKind::text_input) {
+            frame.text_input("field", "Ed", text);
+        } else if (kind == EditorKind::text_area) {
+            role = wui::Role::text_area;
+            frame.text_area("field", "Ed", text, 120);
+        } else {
+            role = wui::Role::numeric_input;
+            frame.numeric_input("field", "Ed", number, -1e308, 1e308);
+        }
+        auto result = frame.finish();
+        if (!std::holds_alternative<wui::DrawPacket>(result)) return false;
+        draft = semantic(std::get<wui::DrawPacket>(result), role, "Ed").value;
+        return true;
+    }
+    void focus() {
+        REQUIRE(step({}));
+        REQUIRE(step({key_event(wui::EventKind::key_down, wui::Key::tab)}));
+        REQUIRE(context->statistics().focused != wui::Id{});
+    }
+};
+}
+
+TEST_CASE("an edit after undo in the same frame applies in every editor") {
+    // Each typed character is its own frame and undo step; undo then
+    // restores a step recorded in an earlier frame, longer than the label.
+    for (const auto kind : editor_kinds) {
+        const std::string name = editor_name(kind);
+        CAPTURE(name);
+        EditorRig rig(kind);
+        rig.number = 1;
+        rig.focus();
+        const std::string digit = kind == EditorKind::numeric_input ? "1" : "a";
+        for (int i = 0; i < 8; ++i) REQUIRE(rig.step({typed(digit)}));
+        const std::string before = rig.draft;
+        REQUIRE(before.size() >= 8);
+        const std::string last = kind == EditorKind::numeric_input ? "2" : "x";
+        CHECK(rig.step({undo_key(), typed(last)}));
+        CHECK(rig.draft == before.substr(0, before.size() - 1) + last);
+        if (kind == EditorKind::numeric_input) {
+            CHECK(rig.step({key_event(wui::EventKind::key_down, wui::Key::enter)}));
+            CHECK(rig.number == 111111112.0);
+        } else {
+            CHECK(rig.text == rig.draft);
+        }
+        // A later frame keeps editing normally.
+        CHECK(rig.step({typed(last)}));
+        CHECK(rig.draft.back() == last.back());
+    }
+}
+
+TEST_CASE("an edit after an undo step is evicted in the same frame applies in every editor") {
+    for (const auto kind : editor_kinds) {
+        const std::string name = editor_name(kind);
+        CAPTURE(name);
+        EditorRig rig(kind);
+        rig.text = std::string(1000, 'q');
+        rig.number = -1.2345678901234567e+300;
+        rig.focus();
+        // The oldest undo step holds the long value; 63 short steps, one per
+        // frame, fill the 64-step history while the draft stays short.
+        REQUIRE(rig.step({control_key(wui::Key::a),
+                          key_event(wui::EventKind::key_down, wui::Key::backspace)}));
+        REQUIRE(rig.draft.empty());
+        for (int i = 0; i < 63; ++i) {
+            REQUIRE(rig.step({i % 2 == 0 ? typed("1")
+                                         : key_event(wui::EventKind::key_down, wui::Key::backspace)}));
+        }
+        REQUIRE(rig.draft == "1");
+        // The first edit evicts the long step; the second must still apply.
+        CHECK(rig.step({typed("2"), typed("3")}));
+        CHECK(rig.draft == "123");
+        CHECK(rig.step({undo_key()}));
+        CHECK(rig.draft == "12");
+    }
+}
+
+TEST_CASE("undo steps longer than the undo byte budget keep every editor working") {
+    // Every draft here exceeds the 64 KiB undo budget on its own, so each
+    // recorded step evicts all older ones and stays the only undo step.
+    std::string lines;
+    while (lines.size() <= 64 * 1024) lines += "0123456789abcde\n";
+    for (const auto kind : editor_kinds) {
+        const std::string name = editor_name(kind);
+        CAPTURE(name);
+        EditorRig rig(kind);
+        rig.text = lines;
+        rig.number = 1;
+        rig.focus();
+        if (kind == EditorKind::numeric_input) {
+            REQUIRE(rig.step({typed(std::string(lines.size(), '1'))}));
+        }
+        const std::string large = rig.draft;
+        REQUIRE(large.size() > 64 * 1024);
+        CHECK(rig.step({typed("2")}));
+        CHECK(rig.draft == large + "2");
+        CHECK(rig.step({typed("3")}));
+        CHECK(rig.draft == large + "23");
+        CHECK(rig.step({undo_key()}));
+        CHECK(rig.draft == large + "2");
+        // The older step was evicted: a second undo has nothing to restore.
+        CHECK(rig.step({undo_key()}));
+        CHECK(rig.draft == large + "2");
+        CHECK(rig.step({typed("4")}));
+        CHECK(rig.draft == large + "24");
+        CHECK(rig.step({undo_key()}));
+        CHECK(rig.draft == large + "2");
+    }
 }
 
 TEST_CASE("data grid column widths expire with the grid after 120 absent completed frames") {

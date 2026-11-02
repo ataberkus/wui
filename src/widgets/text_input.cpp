@@ -28,11 +28,20 @@ std::vector<std::size_t> edit_boundaries(FrameState& frame, std::string_view tex
     return offsets;
 }
 
+// frame.label_bytes counts the label and editor bytes copied in the current
+// frame against the per-frame ceiling; begin_frame resets it. Recording a step
+// copies the draft and is counted. Dropping or restoring a step copies nothing,
+// and that step was usually counted in an earlier frame, so neither one gives
+// bytes back to this frame's count.
 bool snapshot_edit_undo(FrameState& frame, EditState& editor) {
     const std::size_t bytes = editor.draft.size();
     if (!frame.account_edit_bytes(bytes)) return false;
-    if (editor.undo.size() == 64 || editor.undo_bytes + bytes > 64 * 1024) {
-        frame.label_bytes -= editor.undo.front().text.size();
+    // At most 64 steps and 64 KiB: drop the oldest steps until the new one
+    // fits. undo_bytes is the size of the steps held; a step larger than the
+    // whole budget is still kept, as the only one.
+    while (!editor.undo.empty() &&
+           (editor.undo.size() == 64 || editor.undo_bytes + bytes > 64 * 1024)) {
+        editor.undo_bytes -= editor.undo.front().text.size();
         editor.undo.erase(editor.undo.begin());
     }
     editor.undo.push_back(EditSnapshot{
@@ -159,7 +168,6 @@ bool process_edit_event(FrameState& frame, EditState& editor, const wui::InputEv
         auto snapshot = std::move(editor.undo.back());
         editor.undo.pop_back();
         editor.undo_bytes -= snapshot.text.size();
-        frame.label_bytes -= snapshot.text.size();
         editor.draft = std::move(snapshot.text);
         editor.caret = snapshot.caret;
         editor.anchor = snapshot.anchor;

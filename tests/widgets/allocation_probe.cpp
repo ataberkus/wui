@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <new>
 #include <string>
@@ -29,6 +30,8 @@ std::size_t semantic_alloc_calls = 0;
 // among those larger than two pointers throws, once.
 bool failing_ordinal = false;
 std::size_t allocation_ordinal = 0, fail_ordinal = 0;
+// When nonzero, the next allocation larger than this many bytes fails once.
+std::size_t fail_next_larger_than = 0;
 
 // Ignore tiny debug-STL iterator proxies only for fault injection: those can
 // allocate inside noexcept constructors. Measurement counts every request.
@@ -37,6 +40,11 @@ void before_allocation(std::size_t bytes) {
     if (failing_ordinal && bytes > 2 * sizeof(void*) && allocation_ordinal++ == fail_ordinal) {
         injected = true;
         failing_ordinal = false;
+        throw std::bad_alloc{};
+    }
+    if (fail_next_larger_than != 0 && bytes > fail_next_larger_than) {
+        fail_next_larger_than = 0;
+        injected = true;
         throw std::bad_alloc{};
     }
     if (bytes >= 3 * sizeof(wui::Vertex) &&
@@ -442,6 +450,96 @@ int shadow_allocation_failure() {
     return 0;
 }
 
+// Scope closers are noexcept, yet closing a row cell or a scroll area can
+// allocate: reporting a failed canvas copies its error message, and popping
+// the scope's clip off an unbalanced canvas clip stack builds an error, as
+// does a refused row allocation when a row closes. When that allocation
+// fails, the frame must be rejected rather than the process terminated.
+int closer_allocation_failure() {
+    auto created = wui::Context::create({wui::Theme::dark(),
+        std::make_shared<wui::TextureStore>(1024 * 1024), std::make_shared<Text>()});
+    if (!std::holds_alternative<std::unique_ptr<wui::Context>>(created)) return 40;
+    auto context = std::get<std::unique_ptr<wui::Context>>(std::move(created));
+    const std::array<wui::Column, 1> columns{{{wui::ColumnKind::share, 1}}};
+    // Debug-STL proxies fit in this many bytes; every error message involved
+    // needs a larger buffer.
+    constexpr std::size_t message_bytes = 16;
+    enum class Failure { canvas, clip, row };
+    const auto run = [&](bool cell, Failure failure, wui::ErrorCode expected) {
+        wui::FrameInput input{{0, 0, 400, 300}};
+        // The row case: a viewport far above the origin lets a cell hold
+        // content whose height overflows the enclosing flow when the row
+        // closes, although the cell's own flow accepted it.
+        if (failure == Failure::row) input.viewport.y = -3e38f;
+        auto begun = context->begin_frame(input);
+        if (!std::holds_alternative<wui::Frame>(begun)) return 41;
+        auto frame = std::get<wui::Frame>(std::move(begun));
+        if (failure == Failure::row) frame.spacer(3e38f);
+        const auto fail_inside = [&] {
+            if (failure == Failure::canvas) {
+                // The canvas keeps this error; the frame learns of it at close.
+                frame.canvas().rounded_rect(
+                    {0, 0, std::numeric_limits<float>::quiet_NaN(), 10}, 0, {1, 1, 1, 1});
+            } else if (failure == Failure::clip) {
+                frame.canvas().pop_clip(); // the scope's own clip
+            } else {
+                frame.spacer(3e38f);
+            }
+            injected = false;
+            fail_next_larger_than = message_bytes;
+        };
+        if (cell) {
+            auto row = frame.row("row", columns);
+            auto inner = row.cell();
+            fail_inside();
+        } else {
+            auto scroll = frame.scroll("scroll", 100);
+            fail_inside();
+        }
+        fail_next_larger_than = 0;
+        const bool hit = injected;
+        injected = false;
+        auto finished = frame.finish();
+        if (!hit) {
+            std::fprintf(stderr, "closer allocation failure: cell=%d failure=%d not injected\n",
+                         cell, static_cast<int>(failure));
+            return 42;
+        }
+        if (!std::holds_alternative<wui::Error>(finished) ||
+            std::get<wui::Error>(finished).code != expected) {
+            std::fprintf(stderr, "closer allocation failure: cell=%d failure=%d not rejected\n",
+                         cell, static_cast<int>(failure));
+            return 43;
+        }
+        // The context recovers: the same scope closes normally next frame.
+        auto again = context->begin_frame(wui::FrameInput{{0, 0, 400, 300}});
+        if (!std::holds_alternative<wui::Frame>(again)) return 44;
+        auto next = std::get<wui::Frame>(std::move(again));
+        if (cell) {
+            auto row = next.row("row", columns);
+            auto inner = row.cell();
+            next.text("Istanbul");
+        } else {
+            auto scroll = next.scroll("scroll", 100);
+            next.text("Istanbul");
+        }
+        if (!std::holds_alternative<wui::DrawPacket>(next.finish())) return 45;
+        return 0;
+    };
+    for (const bool cell : {true, false}) {
+        if (const int failed = run(cell, Failure::canvas, wui::ErrorCode::capacity)) return failed;
+        if (const int failed = run(cell, Failure::clip, wui::ErrorCode::capacity)) return failed;
+    }
+#ifdef NDEBUG
+    // A refused row allocation is a programmer contract violation, which
+    // asserts in Debug builds; Release builds report it as an error. Only
+    // the message copy can fail here, so the error keeps its code.
+    if (const int failed = run(true, Failure::row, wui::ErrorCode::invalid_argument)) return failed;
+#endif
+    std::puts("Failed allocations while closing row cells and scroll areas reject the frame.");
+    return 0;
+}
+
 // Generic popups (anchored, then modal) paint a raised sheet: its shadow comes
 // from the canvas shadow cache, so warmed frames still allocate nothing.
 int generic_popup_reuse() {
@@ -541,6 +639,7 @@ int main(int argc, char** argv) {
     }
     if (const int failed = glyph_run_allocation_failure()) return failed;
     if (const int failed = shadow_allocation_failure()) return failed;
+    if (const int failed = closer_allocation_failure()) return failed;
     auto created = wui::Context::create({wui::Theme::dark(),
         std::make_shared<wui::TextureStore>(1024 * 1024), std::make_shared<Text>()});
     if (!std::holds_alternative<std::unique_ptr<wui::Context>>(created)) return 2;
