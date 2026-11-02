@@ -1153,3 +1153,69 @@ TEST_CASE("a batched glyph run outside an active frame does nothing") {
     const auto result = packet(canvas);
     CHECK(result->vertices.empty());
 }
+
+TEST_CASE("convex and border meshes list their triangles in outline order for every size") {
+    auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
+    const auto texture = create_pixel(*textures, red);
+    wui::Canvas canvas(textures, 1);
+    // A leading quad gives every mesh a nonzero base vertex.
+    const auto leading = [&] { canvas.image({0, 0, 1, 1}, texture, {0, 0, 1, 1}, {1, 1, 1, 1}); };
+    // Point counts across every remainder of the blocked index writers.
+    for (std::uint32_t count = 3; count <= 41; ++count) {
+        std::vector<wui::Vec2> points(count);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const float angle = 6.2831853f * static_cast<float>(i) / static_cast<float>(count);
+            points[i] = {50 + 40 * std::cos(angle), 50 + 40 * std::sin(angle)};
+        }
+        canvas.begin({0, 0, 100, 100}, 1.0f);
+        leading();
+        canvas.convex(points, {0.5f, 1, 0, 0.5f});
+        const auto result = packet(canvas);
+        const std::uint32_t b = 4;
+        const std::uint32_t o = b + count;
+        REQUIRE(result->vertices.size() == b + 2 * count);
+        std::vector<std::uint32_t> expected{0, 1, 2, 0, 2, 3};
+        for (std::uint32_t t = 1; t + 1 < count; ++t) {
+            expected.insert(expected.end(), {b, b + t, b + t + 1});
+        }
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const auto next = i + 1 == count ? 0 : i + 1;
+            expected.insert(expected.end(), {b + i, o + next, b + next, b + i, o + i, o + next});
+        }
+        CHECK(result->indices == expected);
+        for (std::uint32_t i = 0; i < 2 * count; ++i) {
+            const auto& vertex = result->vertices[b + i];
+            CHECK(vertex.uv.x == 0.5f);
+            CHECK(vertex.uv.y == 0.5f);
+            CHECK(vertex.premultiplied.a == (i < count ? 0.5f : 0.0f));
+            CHECK(vertex.premultiplied.r == (i < count ? 0.25f : 0.0f));
+            if (i < count) {
+                CHECK(vertex.position.x == points[i].x);
+                CHECK(vertex.position.y == points[i].y);
+            }
+        }
+    }
+    // Borders: outline, inner and fringe rings of `count` vertices each.
+    for (const float radius : {0.0f, 1.0f, 2.5f, 4.0f, 7.0f, 12.0f, 30.0f}) {
+        for (const float scale : {1.0f, 1.25f, 2.0f}) {
+            canvas.begin({0, 0, 100, 100}, scale);
+            leading();
+            canvas.border({10, 10, 70, 60}, radius, 1.5f, {1, 1, 1, 1});
+            const auto result = packet(canvas);
+            const std::uint32_t b = 4;
+            REQUIRE((result->vertices.size() - b) % 3 == 0);
+            const auto count = static_cast<std::uint32_t>((result->vertices.size() - b) / 3);
+            REQUIRE(count >= 4);
+            const std::uint32_t n = b + count;
+            const std::uint32_t f = b + 2 * count;
+            std::vector<std::uint32_t> expected{0, 1, 2, 0, 2, 3};
+            for (std::uint32_t i = 0; i < count; ++i) {
+                const auto next = i + 1 == count ? 0 : i + 1;
+                expected.insert(expected.end(),
+                                {b + i, b + next, n + next, b + i, n + next, n + i,
+                                 b + i, f + next, b + next, b + i, f + i, f + next});
+            }
+            CHECK(result->indices == expected);
+        }
+    }
+}

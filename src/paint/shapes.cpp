@@ -898,6 +898,50 @@ std::vector<float> gaussian_kernel(float sigma) {
 
 } // namespace detail
 
+namespace {
+
+// Vertices at `points`, each with uv (0.5, 0.5) and `color`; returns the
+// cursor past them. Four per iteration share the loop overhead, which is
+// otherwise as large as the stores themselves.
+Vertex* put_vertices(Vertex* out, std::span<const Vec2> points, Color color) {
+    const Vertex pattern{{}, {0.5f, 0.5f}, color};
+    const Vec2* point = points.data();
+    const Vec2* const end = point + points.size();
+    for (; end - point >= 4; point += 4, out += 4) {
+        for (std::size_t k = 0; k < 4; ++k) {
+            out[k] = pattern;
+            out[k].position = point[k];
+        }
+    }
+    for (; point != end; ++point, ++out) {
+        *out = pattern;
+        out->position = *point;
+    }
+    return out;
+}
+
+// Index sequences that repeat with a fixed per-lane step, a block at a time:
+// `blocks` copies of `values`, every lane advancing by its `step` between
+// copies. Twelve lanes are three 128-bit vectors, which compilers keep in
+// registers, so a block costs three additions and three stores instead of
+// recomputing every index.
+using IndexBlock = std::array<std::uint32_t, 12>;
+std::uint32_t* put_blocks(std::uint32_t* out, IndexBlock values, const IndexBlock& step,
+                          std::size_t blocks) {
+    for (std::size_t block = 0; block < blocks; ++block) {
+        for (std::size_t k = 0; k < values.size(); ++k) {
+            out[k] = values[k];
+        }
+        out += values.size();
+        for (std::size_t k = 0; k < values.size(); ++k) {
+            values[k] += step[k];
+        }
+    }
+    return out;
+}
+
+} // namespace
+
 struct Canvas::Impl {
     explicit Impl(std::shared_ptr<TextureStore> texture_store, std::size_t packet_limit)
         : textures(std::move(texture_store)), max_packet_slots(packet_limit) {
@@ -1234,31 +1278,40 @@ struct Canvas::Impl {
         if (!mesh) {
             return;
         }
-        const auto inner_color = premultiply_valid(color);
-        Vertex* vertex = mesh->vertex;
-        for (const auto point : points) {
-            *vertex++ = {point, {0.5f, 0.5f}, inner_color};
-        }
-        for (const auto point : outer) {
-            *vertex++ = {point, {0.5f, 0.5f}, {0, 0, 0, 0}};
-        }
-        mesh->vertex = vertex;
+        mesh->vertex = put_vertices(mesh->vertex, points, premultiply_valid(color));
+        mesh->vertex = put_vertices(mesh->vertex, outer, {0, 0, 0, 0});
         std::uint32_t* index = mesh->index;
         const auto b = mesh->base;
         if (interior.empty()) {
-            for (std::uint32_t i = 1; i + 1 < count; ++i) {
-                put(index, std::array{b, b + i, b + i + 1});
+            // Fan triangles (b, b + t, b + t + 1) for t in [1, count - 1),
+            // four per block.
+            const std::uint32_t blocks = (count - 2) / 4;
+            index = put_blocks(index,
+                               {b, b + 1, b + 2, b, b + 2, b + 3,
+                                b, b + 3, b + 4, b, b + 4, b + 5},
+                               {0, 4, 4, 0, 4, 4, 0, 4, 4, 0, 4, 4}, blocks);
+            for (std::uint32_t t = 1 + blocks * 4; t + 1 < count; ++t) {
+                put(index, std::array{b, b + t, b + t + 1});
             }
         } else {
             for (const auto local : interior) {
                 *index++ = b + local;
             }
         }
+        // Two fringe triangles per edge (i, next): (b + i, o + next, b + next)
+        // and (b + i, o + i, o + next). Edges that do not wrap go two per
+        // block; the closing edge (count - 1, 0) comes last.
         const auto o = b + count; // first outer (fringe) vertex
-        for (std::uint32_t i = 0; i < count; ++i) {
-            const auto next = i + 1 == count ? 0 : i + 1;
-            put(index, std::array{b + i, o + next, b + next, b + i, o + i, o + next});
+        const std::uint32_t pairs = (count - 1) / 2;
+        index = put_blocks(index,
+                           {b, o + 1, b + 1, b, o, o + 1,
+                            b + 1, o + 2, b + 2, b + 1, o + 1, o + 2},
+                           {2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2}, pairs);
+        for (std::uint32_t i = pairs * 2; i + 1 < count; ++i) {
+            put(index, std::array{b + i, o + i + 1, b + i + 1, b + i, o + i, o + i + 1});
         }
+        const auto last = count - 1;
+        put(index, std::array{b + last, o, b, b + last, o + last, o});
         mesh->index = index;
         end_mesh(*mesh, *white);
     }
@@ -1569,37 +1622,39 @@ void Canvas::border(Rect bounds, float radius, float width, Color color) {
     auto mesh = impl_->begin_mesh(std::size_t{count} * 3, std::size_t{count} * 12);
     if (!mesh) return;
     const Color fill = premultiply_valid(color);
-    for (const auto point : outer)
-        *mesh->vertex++ = {point, {0.5f, 0.5f}, fill};
+    mesh->vertex = put_vertices(mesh->vertex, outer, fill);
+    // Each outer point maps into the inner outline from the corner centers of
+    // its quadrant; index 0 is the left (top) side, 1 the right (bottom).
     const float middle_x = bounds.x + bounds.w * 0.5f;
     const float middle_y = bounds.y + bounds.h * 0.5f;
+    const std::array center_x{bounds.x + outer_radius, (bounds.x + bounds.w) + -outer_radius};
+    const std::array center_y{bounds.y + outer_radius, (bounds.y + bounds.h) + -outer_radius};
+    const std::array inner_x{inner.x + inner_radius, (inner.x + inner.w) + -inner_radius};
+    const std::array inner_y{inner.y + inner_radius, (inner.y + inner.h) + -inner_radius};
+    const float ratio = outer_radius > 0 ? inner_radius / outer_radius : 0;
+    const Vertex pattern{{}, {0.5f, 0.5f}, fill};
     for (const auto point : outer) {
-        const bool left = point.x <= middle_x;
-        const bool top = point.y <= middle_y;
-        const float center_x = (left ? bounds.x : bounds.x + bounds.w) +
-                               (left ? outer_radius : -outer_radius);
-        const float center_y = (top ? bounds.y : bounds.y + bounds.h) +
-                               (top ? outer_radius : -outer_radius);
-        const float inner_x = (left ? inner.x : inner.x + inner.w) +
-                              (left ? inner_radius : -inner_radius);
-        const float inner_y = (top ? inner.y : inner.y + inner.h) +
-                              (top ? inner_radius : -inner_radius);
-        const float ratio = outer_radius > 0 ? inner_radius / outer_radius : 0;
-        *mesh->vertex++ = {{inner_x + (point.x - center_x) * ratio,
-                            inner_y + (point.y - center_y) * ratio},
-                           {0.5f, 0.5f}, fill};
+        const std::size_t side_x = point.x <= middle_x ? 0 : 1;
+        const std::size_t side_y = point.y <= middle_y ? 0 : 1;
+        Vertex vertex = pattern;
+        vertex.position = {inner_x[side_x] + (point.x - center_x[side_x]) * ratio,
+                           inner_y[side_y] + (point.y - center_y[side_y]) * ratio};
+        *mesh->vertex++ = vertex;
     }
-    for (const auto point : fringe)
-        *mesh->vertex++ = {point, {0.5f, 0.5f}, {0, 0, 0, 0}};
+    mesh->vertex = put_vertices(mesh->vertex, fringe, {0, 0, 0, 0});
     // Rings of `count` vertices each: outer edge, inner edge, outer fringe.
+    // Each edge (i, next) has a band quad and a fringe quad; edges that do
+    // not wrap advance every index by one, the closing edge comes last.
     const auto o = mesh->base;
     const auto n = o + count;
     const auto f = o + count * 2;
-    for (std::uint32_t i = 0; i < count; ++i) {
-        const auto next = i + 1 == count ? 0 : i + 1;
-        Impl::put(mesh->index, std::array{o + i, o + next, n + next, o + i, n + next, n + i,
-                                          o + i, f + next, o + next,
-                                          o + i, f + i, f + next});
+    if (count > 0) { // rounded outlines always have points; keep the loop's bounds
+        mesh->index = put_blocks(mesh->index,
+                                 {o, o + 1, n + 1, o, n + 1, n, o, f + 1, o + 1, o, f, f + 1},
+                                 {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, count - 1);
+        const auto last = count - 1;
+        Impl::put(mesh->index, std::array{o + last, o, n, o + last, n, n + last,
+                                          o + last, f, o, o + last, f + last, f});
     }
     impl_->end_mesh(*mesh, *impl_->white);
 }
