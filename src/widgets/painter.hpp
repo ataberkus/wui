@@ -130,7 +130,6 @@ inline Color pick_ink(Color first, Color second, Color fill) {
 }
 // Text or canvas ink, whichever reads better on `fill` (dark ink on light accents).
 inline Color readable_ink(const Theme& theme, Color fill) { return pick_ink(theme.text, theme.canvas, fill); }
-inline Color check_ink(const Theme& theme, Color fill) { return readable_ink(theme, fill); }
 
 // Derived tokens: every colour below comes from existing theme tokens.
 // Recessed well for fields and toggles.
@@ -173,13 +172,12 @@ inline Rect ring_inner(Rect bounds, bool focused, bool invalid, bool outlined) {
 // Every band is a Canvas::border drawn after the fill: borders keep a hard
 // inner edge, while a stack of inset fills lets each fringe eat half of the
 // band below it. Order: invalid, separator, ring, so no fringe softens a band.
-// Returns the area left inside the rings.
-inline Rect paint_rings(FrameState& frame, Rect bounds, bool focused, bool invalid,
+// ring_inner() gives the area the bands leave.
+inline void paint_rings(FrameState& frame, Rect bounds, bool focused, bool invalid,
                         const Theme& theme, Color outline = Color{0, 0, 0, 0}) {
     auto& canvas = frame.canvas;
     const float radius = theme.control_radius;
     const auto concentric = [radius](float in) { return std::max(0.0f, radius - in); };
-    const bool outlined = outline.a > 0.0f;
     if (focused) {
         if (std::min(bounds.w, bounds.h) < 12.0f) {
             canvas.border(bounds, radius, 2.0f, theme.focus);
@@ -190,10 +188,9 @@ inline Rect paint_rings(FrameState& frame, Rect bounds, bool focused, bool inval
         }
     } else if (invalid) {
         canvas.border(bounds, radius, 2.0f, invalid_ink(theme));
-    } else if (outlined) {
+    } else if (outline.a > 0.0f) {
         canvas.border(bounds, radius, 1.0f, outline);
     }
-    return ring_inner(bounds, focused, invalid, outlined);
 }
 // Panel-coloured fills are invisible on their container, so they are skipped:
 // quiet buttons, checkbox and radio rows at rest, disabled quiet controls.
@@ -203,11 +200,10 @@ inline void paint_surface(FrameState& frame, Rect bounds, Color fill,
     paint_rings(frame, bounds, focused, invalid, theme);
 }
 // Recessed field: well fill plus a 1px outline (or the focus/invalid rings).
-inline Rect paint_field(FrameState& frame, Rect bounds, const Theme& theme, float hover,
+inline void paint_field(FrameState& frame, Rect bounds, const Theme& theme, float hover,
                         bool focused, bool enabled, bool invalid, bool open = false) {
     frame.canvas.rounded_rect(bounds, theme.control_radius, field_fill(theme, enabled));
-    return paint_rings(frame, bounds, focused, invalid, theme,
-                       field_outline(theme, hover, enabled, open));
+    paint_rings(frame, bounds, focused, invalid, theme, field_outline(theme, hover, enabled, open));
 }
 // Down chevron `size` wide centred on (x, y): 45 degree arms 1.5px thick, one
 // simple six-point polygon.
