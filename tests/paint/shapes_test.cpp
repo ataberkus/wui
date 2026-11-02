@@ -1219,3 +1219,54 @@ TEST_CASE("convex and border meshes list their triangles in outline order for ev
         }
     }
 }
+
+TEST_CASE("rounded shapes stay exact across steady, churning and returning frames") {
+    auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
+    wui::Canvas reused(textures, 1);
+    // A pool of rounded shapes (squares, circles, capsules, plain corners)
+    // drawn in changing subsets: long steady stretches keep one recording
+    // generation, growing churn makes it stale and starts a new one, and
+    // shapes come back after being absent for many frames.
+    const auto shape = [](std::uint32_t i) {
+        const float x = static_cast<float>(i % 8) * 37.0f + 0.25f * static_cast<float>(i / 8);
+        const float y = static_cast<float>(i / 8) * 29.0f;
+        const float w = 12.0f + static_cast<float>(i % 5) * 7.0f;
+        const float h = (i % 3 == 0) ? w : 10.0f + static_cast<float>(i % 4) * 5.0f;
+        const float radius = (i % 6 == 0) ? 0.0f : (i % 6 == 1) ? w : static_cast<float>(i % 7);
+        return std::pair{wui::Rect{x, y, w, h}, radius};
+    };
+    std::uint32_t seed = 12345;
+    const auto next = [&seed] {
+        seed = seed * 1664525u + 1013904223u;
+        return seed >> 8;
+    };
+    std::vector<std::uint32_t> scene;
+    for (int frame = 0; frame < 160; ++frame) {
+        const int phase = frame / 20;
+        if (phase % 2 == 0 && frame % 20 != 0) {
+            // Steady: the same scene, now and then one shape swapped.
+            if (frame % 7 == 0 && !scene.empty()) scene[next() % scene.size()] = next() % 400;
+        } else {
+            // Churn: mostly new shapes from a wide pool, a few old ones.
+            scene.clear();
+            const std::uint32_t count = 10 + next() % 30;
+            for (std::uint32_t i = 0; i < count; ++i) {
+                scene.push_back(i < 6 ? i : next() % (phase % 4 == 1 ? 400u : 60u));
+            }
+        }
+        const float scale = phase % 3 == 2 ? 1.5f : 1.0f;
+        const auto draw = [&](wui::Canvas& canvas) {
+            canvas.begin({0, 0, 400, 400}, scale);
+            for (const auto index : scene) {
+                const auto [bounds, radius] = shape(index);
+                canvas.rounded_rect(bounds, radius, {0.3f, 0.6f, 0.9f, 1});
+                if (index % 4 == 0) canvas.border(bounds, radius, 1.0f, {1, 1, 1, 0.5f});
+            }
+            return packet(canvas);
+        };
+        const auto actual = draw(reused);
+        wui::Canvas fresh(textures, 1);
+        const auto expected = draw(fresh);
+        REQUIRE(same_packet(*actual, *expected));
+    }
+}
