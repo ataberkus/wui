@@ -377,6 +377,56 @@ int glyph_run_allocation_failure() {
     std::puts("A glyph run whose room cannot be allocated paints and fails like one image per glyph.");
     return 0;
 }
+
+// Generic popups (anchored, then modal) paint a raised sheet: its shadow comes
+// from the canvas shadow cache, so warmed frames still allocate nothing.
+int generic_popup_reuse() {
+    auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
+    auto created = wui::Context::create({wui::Theme::dark(), textures, std::make_shared<Text>()});
+    if (!std::holds_alternative<std::unique_ptr<wui::Context>>(created)) return 12;
+    auto context = std::get<std::unique_ptr<wui::Context>>(std::move(created));
+    bool value = true;
+    semantic_alloc_calls = 0;
+    for (const bool modal : {false, true}) {
+        for (int i = 0; i < 158; ++i) {
+            wui::FrameInput input{{0, 0, 640, 400}, modal ? 1.5f : 1.0f};
+            input.dt_seconds = 0.1;
+            if (i >= 8) counting_semantic = true;
+            auto begun = context->begin_frame(input);
+            if (!std::holds_alternative<wui::Frame>(begun)) return 13;
+            auto frame = std::get<wui::Frame>(std::move(begun));
+            {
+                auto panel = frame.panel("root");
+                const auto anchor = frame.next_rect(36);
+                frame.button("anchor", "Options");
+                frame.checkbox("below", "Below", value);
+                if (i == 0) frame.open_popup(modal ? "dialog" : "menu");
+                if (auto popup = frame.popup(modal ? "dialog" : "menu", {anchor, 0, modal})) {
+                    frame.text("Istanbul");
+                    frame.description("Istanbul");
+                    frame.button("inside", "Inside");
+                }
+            }
+            auto finished = frame.finish();
+            counting_semantic = false;
+            if (!std::holds_alternative<wui::DrawPacket>(finished)) return 14;
+            if (i >= 8) {
+                // The untitled root panel is one untitled panel; the open
+                // popup's sheet must be a second one.
+                int untitled_panels = 0;
+                for (const auto& entry : std::get<wui::DrawPacket>(finished)->semantics)
+                    if (entry.role == wui::Role::panel && entry.label.empty()) ++untitled_panels;
+                if (untitled_panels < 2) return 15;
+            }
+        }
+    }
+    if (semantic_alloc_calls != 0) {
+        std::fprintf(stderr, "generic popup reuse allocated %zu times\n", semantic_alloc_calls);
+        return 1;
+    }
+    std::puts("Warmed anchored and modal generic popups perform zero allocations across 300 frames.");
+    return 0;
+}
 }
 
 int main(int argc, char** argv) {
@@ -417,7 +467,8 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (argc == 2 && std::string(argv[1]) == "--frame-reuse") {
-        return frame_reuse();
+        if (const int result = frame_reuse()) return result;
+        return generic_popup_reuse();
     }
     if (argc != 1) {
         std::fprintf(stderr,

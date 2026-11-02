@@ -166,6 +166,13 @@ inline float shadow_sigma(const FrameState& frame, float sigma) {
     return std::clamp(sigma, 0.5f / scale, 32.0f / scale);
 }
 
+// Elevation of a raised popup sheet, matching the dropdown menu: a cached soft
+// shadow 4px down (sigma 8, alpha 0.8: the cached shadow blurs a (2r+1)px
+// shape, so its peak coverage is only about 0.7) and the track_ink hairline.
+inline PanelElevation popup_elevation(const FrameState& frame, const Theme& theme) {
+    return {{0.0f, 0.0f, 0.0f, 0.8f}, shadow_sigma(frame, 8.0f), 4.0f, track_ink(theme)};
+}
+
 // Area left inside the bands paint_rings() draws for the same arguments.
 inline Rect ring_inner(Rect bounds, bool focused, bool invalid, bool outlined) {
     if (focused) {

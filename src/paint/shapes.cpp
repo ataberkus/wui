@@ -2276,13 +2276,19 @@ PanelMark CanvasAccess::open_panel(Canvas& canvas, Id id, std::string_view title
 }
 
 void CanvasAccess::close_panel(Canvas& canvas, PanelMark mark,
-                              Rect bounds, Rect interior) {
+                              Rect bounds, Rect interior, const PanelElevation& elevation) {
     auto& impl = *canvas.impl_;
     if (!impl.ready()) {
         return;
     }
     if (!valid_rect(bounds) || !valid_rect(interior)) {
         impl.fail(invalid_argument("Panel bounds and interior must be finite and valid"));
+        return;
+    }
+    // Canvas::shadow checks the physical sigma range.
+    if (!valid_color(elevation.shadow) || !valid_color(elevation.hairline) ||
+        !finite(elevation.shadow_sigma) || !finite(elevation.shadow_offset)) {
+        impl.fail(invalid_argument("Panel elevation must be finite and valid"));
         return;
     }
     auto& packet = *impl.current;
@@ -2295,11 +2301,18 @@ void CanvasAccess::close_panel(Canvas& canvas, PanelMark mark,
         return;
     }
     const auto child_end = packet.batches.size();
+    const bool elevated = elevation.shadow.a > 0.0f || elevation.hairline.a > 0.0f;
     impl.merge_barrier = true;
     try {
+        if (elevation.shadow.a > 0.0f) {
+            canvas.shadow({bounds.x, bounds.y + elevation.shadow_offset, bounds.w, bounds.h},
+                          mark.radius, elevation.shadow_sigma, elevation.shadow);
+        }
         // Only the final outline is tessellated: its clamped radius and topology
         // can differ completely from those of the provisional zero-height box.
+        if (elevated) impl.clips.push_back(intersect(mark.clip, bounds));
         canvas.rounded_rect(bounds, mark.radius, mark.color);
+        if (elevated) impl.clips.pop_back();
     } catch (const std::bad_alloc&) {
         impl.fail({ErrorCode::capacity, {}});
         return;
@@ -2323,6 +2336,18 @@ void CanvasAccess::close_panel(Canvas& canvas, PanelMark mark,
                 impl.pending_batches.begin() + middle, impl.pending_batches.end());
     // Subsequent sibling paint must not extend a child batch after reordering.
     impl.merge_barrier = true;
+    if (elevation.hairline.a > 0.0f) {
+        // Above the children, so no child paint covers the sheet's edge.
+        try {
+            impl.clips.push_back(intersect(mark.clip, bounds));
+            canvas.border(bounds, mark.radius, 1.0f, elevation.hairline);
+            impl.clips.pop_back();
+        } catch (const std::bad_alloc&) {
+            impl.fail({ErrorCode::capacity, {}});
+            return;
+        }
+        impl.merge_barrier = true;
+    }
 }
 CanvasLayer CanvasAccess::begin_layer(Canvas& canvas, Rect clip) {
     auto& impl = *canvas.impl_;

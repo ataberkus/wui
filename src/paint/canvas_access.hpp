@@ -6,6 +6,17 @@
 #include <span>
 
 namespace wui::detail {
+// Optional elevation of a panel sheet, drawn at close with the measured
+// bounds: a cached soft shadow (Canvas::shadow, offset downward) below the
+// sheet in the clip current at open, and a 1px hairline (Canvas::border)
+// above the children. An elevated panel (either part present) clips its
+// sheet and hairline to its bounds, so their straight edges stay crisp.
+struct PanelElevation {
+    Color shadow{0, 0, 0, 0};   // alpha 0: no shadow
+    float shadow_sigma = 0;     // logical; sigma * scale must lie in [0.5, 32]
+    float shadow_offset = 0;    // logical, downward
+    Color hairline{0, 0, 0, 0}; // alpha 0: no hairline
+};
 struct PanelMark {
     std::size_t first_batch = 0, semantic_index = 0;
     Rect clip{};
@@ -25,8 +36,11 @@ struct CanvasAccess {
     // close. No callback replay or mutation of an already published packet.
     static PanelMark open_panel(Canvas&, Id, std::string_view title,
                                 Rect provisional, float radius, Color color);
-    // Caller has popped the panel's child clip before closing.
-    static void close_panel(Canvas&, PanelMark, Rect bounds, Rect interior);
+    // Caller has popped the panel's child clip before closing. With an
+    // elevation the final order is shadow, sheet, children (clipped to the
+    // interior), hairline.
+    static void close_panel(Canvas&, PanelMark, Rect bounds, Rect interior,
+                            const PanelElevation& elevation = {});
     static void sync_focus(Canvas&, Id);
     static void clear_choice_selection(Canvas&, Id);
     // Paint between begin_layer and end_layer is detached from the main batch
