@@ -36,7 +36,12 @@ std::vector<std::size_t> edit_boundaries(FrameState& frame, std::string_view tex
 bool snapshot_edit_undo(FrameState& frame, EditState& editor) {
     const std::size_t bytes = editor.draft.size();
     if (!frame.account_edit_bytes(bytes)) return false;
-    if (editor.undo.size() == 64 || editor.undo_bytes + bytes > 64 * 1024) {
+    // At most 64 steps and 64 KiB: drop the oldest steps until the new one
+    // fits. undo_bytes is the size of the steps held; a step larger than the
+    // whole budget is still kept, as the only one.
+    while (!editor.undo.empty() &&
+           (editor.undo.size() == 64 || editor.undo_bytes + bytes > 64 * 1024)) {
+        editor.undo_bytes -= editor.undo.front().text.size();
         editor.undo.erase(editor.undo.begin());
     }
     editor.undo.push_back(EditSnapshot{

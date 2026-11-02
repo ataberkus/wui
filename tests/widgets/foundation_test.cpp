@@ -950,6 +950,39 @@ TEST_CASE("an edit after an undo step is evicted in the same frame applies in ev
     }
 }
 
+TEST_CASE("undo steps longer than the undo byte budget keep every editor working") {
+    // Every draft here exceeds the 64 KiB undo budget on its own, so each
+    // recorded step evicts all older ones and stays the only undo step.
+    std::string lines;
+    while (lines.size() <= 64 * 1024) lines += "0123456789abcde\n";
+    for (const auto kind : editor_kinds) {
+        const std::string name = editor_name(kind);
+        CAPTURE(name);
+        EditorRig rig(kind);
+        rig.text = lines;
+        rig.number = 1;
+        rig.focus();
+        if (kind == EditorKind::numeric_input) {
+            REQUIRE(rig.step({typed(std::string(lines.size(), '1'))}));
+        }
+        const std::string large = rig.draft;
+        REQUIRE(large.size() > 64 * 1024);
+        CHECK(rig.step({typed("2")}));
+        CHECK(rig.draft == large + "2");
+        CHECK(rig.step({typed("3")}));
+        CHECK(rig.draft == large + "23");
+        CHECK(rig.step({undo_key()}));
+        CHECK(rig.draft == large + "2");
+        // The older step was evicted: a second undo has nothing to restore.
+        CHECK(rig.step({undo_key()}));
+        CHECK(rig.draft == large + "2");
+        CHECK(rig.step({typed("4")}));
+        CHECK(rig.draft == large + "24");
+        CHECK(rig.step({undo_key()}));
+        CHECK(rig.draft == large + "2");
+    }
+}
+
 TEST_CASE("data grid column widths expire with the grid after 120 absent completed frames") {
     auto context = make_context();
     const std::array<wui::GridColumn, 2> columns{{{"A", 120}, {"B", 120}}};
