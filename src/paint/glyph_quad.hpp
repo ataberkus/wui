@@ -4,19 +4,11 @@
 #include <wui/text.hpp>
 
 #include "../core/float_bits.hpp"
+#include "simd.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
-
-// x86 compilers that guarantee SSE2 (GCC and Clang with -msse2, the x86-64
-// default; MSVC for x64 and for x86 with /arch:SSE2 or higher) get a packed
-// version of the per-glyph work. Everything else uses the scalar version.
-#if defined(__SSE2__) || (defined(_M_X64) && !defined(_M_ARM64EC)) || \
-    (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
-#define WUI_GLYPH_CORNERS_SSE2 1
-#include <emmintrin.h>
-#endif
 
 namespace wui::detail {
 
@@ -41,7 +33,7 @@ class GlyphCorners {
 public:
     GlyphCorners(Vec2 offset, Color premultiplied)
         : offset_(offset), color_(premultiplied)
-#ifdef WUI_GLYPH_CORNERS_SSE2
+#ifdef WUI_PAINT_SSE2
           ,
           offset4_(_mm_setr_ps(offset.x, offset.y, 0.0f, 0.0f)),
           color4_(_mm_setr_ps(premultiplied.r, premultiplied.g, premultiplied.b,
@@ -52,7 +44,7 @@ public:
 
     GlyphVerdict operator()(const GlyphQuad& glyph, Vertex* out, std::uint32_t* indices,
                             std::uint32_t base) const {
-#ifdef WUI_GLYPH_CORNERS_SSE2
+#ifdef WUI_PAINT_SSE2
         return packed(glyph, out, indices, base);
 #else
         return scalar(glyph, out, indices, base);
@@ -93,7 +85,7 @@ public:
         return GlyphVerdict::quad;
     }
 
-#ifdef WUI_GLYPH_CORNERS_SSE2
+#ifdef WUI_PAINT_SSE2
     // The same lanes as scalar(): low = (x, y, u, v), extent = (w, h, uw,
     // uh), high = low + extent, with IEEE single precision adds; the
     // finiteness flags are float_bits.hpp's, and the comparisons are the
@@ -141,7 +133,7 @@ public:
 private:
     Vec2 offset_;
     Color color_;
-#ifdef WUI_GLYPH_CORNERS_SSE2
+#ifdef WUI_PAINT_SSE2
     __m128 offset4_;
     __m128 color4_;
 #endif

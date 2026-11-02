@@ -4,6 +4,7 @@
 #include "canvas_access.hpp"
 #include "glyph_quad.hpp"
 #include "shapes_detail.hpp"
+#include "simd.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1186,12 +1187,12 @@ Vertex* put_vertices(Vertex* out, std::span<const Vec2> points, Color color) {
 // `blocks` copies of `values`, every lane advancing by its `step` between
 // copies. Twelve lanes are three 128-bit vectors kept in registers, so a
 // block costs three additions and three stores instead of recomputing every
-// index (explicitly with SSE2, see glyph_quad.hpp, and otherwise as
-// compilers vectorize the lane loops).
+// index (explicitly with SSE2, see simd.hpp, and otherwise as compilers
+// vectorize the lane loops).
 using IndexBlock = std::array<std::uint32_t, 12>;
 std::uint32_t* put_blocks(std::uint32_t* out, const IndexBlock& values, const IndexBlock& step,
                           std::size_t blocks) {
-#ifdef WUI_GLYPH_CORNERS_SSE2
+#ifdef WUI_PAINT_SSE2
     const auto load = [](const IndexBlock& lanes, std::size_t at) {
         return _mm_loadu_si128(reinterpret_cast<const __m128i*>(lanes.data() + at));
     };

@@ -1467,7 +1467,7 @@ TEST_CASE("scalar and packed glyph corners match image() for every value class")
             reference_glyph(glyph, offset, color, unused, unused_indices, base))];
         check_glyph_corners([&](const auto&... args) { return corners.scalar(args...); }, glyph,
                             offset, color, base);
-#ifdef WUI_GLYPH_CORNERS_SSE2
+#ifdef WUI_PAINT_SSE2
         check_glyph_corners([&](const auto&... args) { return corners.packed(args...); }, glyph,
                             offset, color, base);
 #endif

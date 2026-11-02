@@ -2,19 +2,12 @@
 
 #include "../core/float_bits.hpp"
 #include "../core/resource_limits.hpp"
+#include "simd.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-
-// x86 compilers that guarantee SSE2 scan the vertex and index arrays with
-// explicit 128-bit operations (see finite_vertices and indices_in_range).
-#if defined(__SSE2__) || (defined(_M_X64) && !defined(_M_ARM64EC)) || \
-    (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
-#define WUI_PACKET_SSE2 1
-#include <emmintrin.h>
-#endif
 
 namespace wui {
 namespace {
@@ -48,7 +41,7 @@ bool finite_vertices(const std::vector<Vertex>& vertices) {
     const Vertex* first = vertices.data();
     const Vertex* const last = first + vertices.size();
     std::uint32_t any = 0;
-#ifdef WUI_PACKET_SSE2
+#ifdef WUI_PAINT_SSE2
     static_assert(sizeof(Vertex) == 2 * sizeof(__m128i));
     const __m128i exponent = _mm_set1_epi32(0x7f800000);
     __m128i high0 = _mm_setzero_si128();
@@ -122,7 +115,7 @@ bool indices_in_range(const std::uint32_t* indices, std::size_t count, std::int3
         // exceeds last as an unsigned value, which is a signed comparison
         // once both have their top bit flipped.
         std::size_t i = 0;
-#ifdef WUI_PACKET_SSE2
+#ifdef WUI_PAINT_SSE2
         const __m128i top = _mm_set1_epi32(static_cast<int>(0x80000000u));
         const __m128i bound = _mm_xor_si128(_mm_set1_epi32(static_cast<int>(last)), top);
         const auto above = [&](std::size_t at) {
