@@ -1,5 +1,6 @@
 #include <wui/layout.hpp>
 #include "flow_detail.hpp"
+#include "../core/float_bits.hpp"
 
 #include <cmath>
 #include <new>
@@ -10,20 +11,27 @@
 namespace wui {
 namespace {
 
-bool valid_area(Rect area) {
-    return std::isfinite(area.x) && std::isfinite(area.y) &&
-           std::isfinite(area.w) && std::isfinite(area.h) &&
-           area.w >= 0.0f && area.h >= 0.0f;
+// Exactly isfinite(x, y, w, h, gap) && w >= 0 && h >= 0 && gap >= 0, with
+// one finiteness test over all five words (see float_bits.hpp).
+bool valid_area_and_gap(Rect area, float gap) {
+    const auto nonfinite = detail::nonfinite_bits(area.x) | detail::nonfinite_bits(area.y) |
+                           detail::nonfinite_bits(area.w) | detail::nonfinite_bits(area.h) |
+                           detail::nonfinite_bits(gap);
+    return ((nonfinite & detail::nonfinite_flag) == 0) &
+           (area.w >= 0.0f) & (area.h >= 0.0f) & (gap >= 0.0f);
 }
 
 Error invalid_layout(const char* message) {
     return {ErrorCode::invalid_argument, message};
 }
 
+// Exactly isfinite(value) && lowest <= value && value <= max for float:
+// the float range is symmetric (lowest == -max), and NaN and the infinities
+// fail the magnitude comparison.
 bool representable_as_float(double value) {
-    constexpr double lowest = std::numeric_limits<float>::lowest();
     constexpr double maximum = std::numeric_limits<float>::max();
-    return std::isfinite(value) && value >= lowest && value <= maximum;
+    static_assert(std::numeric_limits<float>::lowest() == -std::numeric_limits<float>::max());
+    return std::fabs(value) <= maximum;
 }
 
 template<class Vector>
@@ -35,7 +43,7 @@ Result<std::size_t> append_cells(Rect area, std::span<const Column> columns,
         return invalid_layout(message);
     };
     try {
-        if (!valid_area(area) || !std::isfinite(gap) || gap < 0.0f)
+        if (!valid_area_and_gap(area, gap))
             return invalid("row dimensions and gap must be finite and nonnegative");
         if (columns.empty()) return std::size_t{0};
 
@@ -74,8 +82,10 @@ Result<std::size_t> append_cells(Rect area, std::span<const Column> columns,
                                      ? static_cast<double>(column.amount)
                                      : remaining * column.amount / weight_sum;
             const double right = x + width;
-            if (!representable_as_float(width) || !representable_as_float(x) ||
-                !representable_as_float(right))
+            const bool width_fits = representable_as_float(width);
+            const bool x_fits = representable_as_float(x);
+            const bool right_fits = representable_as_float(right);
+            if (!(width_fits & x_fits & right_fits))
                 return invalid("resolved row geometry overflowed");
             out.push_back({static_cast<float>(x), area.y,
                            static_cast<float>(width), area.h});
@@ -94,8 +104,7 @@ Result<std::size_t> append_cells(Rect area, std::span<const Column> columns,
 } // namespace
 
 Flow::Flow(Rect area, float gap)
-    : area_(area), gap_(gap),
-      valid_(valid_area(area) && std::isfinite(gap) && gap >= 0.0f) {}
+    : area_(area), gap_(gap), valid_(valid_area_and_gap(area, gap)) {}
 
 Result<Rect> Flow::take(float height) {
     Rect row;
