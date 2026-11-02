@@ -1,6 +1,7 @@
 #include <wui/types.hpp>
 
 #include "float_bits.hpp"
+#include "rect_ops.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -45,19 +46,7 @@ Color premultiply(Color color) {
     };
 }
 
-Rect intersect(Rect a, Rect b) {
-    const float a_right = a.x + a.w, a_bottom = a.y + a.h;
-    const float b_right = b.x + b.w, b_bottom = b.y + b.h;
-    if (!valid_extent(a, a_right, a_bottom) || !valid_extent(b, b_right, b_bottom)) {
-        return {};
-    }
-
-    const float left = std::max(a.x, b.x);
-    const float top = std::max(a.y, b.y);
-    const float right = std::min(a_right, b_right);
-    const float bottom = std::min(a_bottom, b_bottom);
-    return {left, top, std::max(0.0f, right - left), std::max(0.0f, bottom - top)};
-}
+Rect intersect(Rect a, Rect b) { return detail::intersect_rects(a, b); }
 
 bool contains(Rect rect, Vec2 point) {
     const float right = rect.x + rect.w, bottom = rect.y + rect.h;

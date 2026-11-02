@@ -1,4 +1,5 @@
 #include "painter.hpp"
+#include "../core/rect_ops.hpp"
 
 #include <algorithm>
 
@@ -16,7 +17,7 @@ bool emit_button(FrameState& frame, std::string_view key, std::string_view label
     if (frame.error) return false;
     const Rect row = frame.take(std::max(theme.control_height, run->height + theme.gap));
     if (frame.error || !frame.check_canvas()) return false;
-    const Rect hit = intersect(row, frame.clip());
+    const Rect hit = intersect_rects(row, frame.clip());
     initialize_animation(*state, false);
     Behavior behavior;
     {

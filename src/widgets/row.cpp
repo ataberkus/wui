@@ -1,4 +1,5 @@
 #include "../core/context_detail.hpp"
+#include "../core/rect_ops.hpp"
 #include "../layout/flow_detail.hpp"
 
 #include <algorithm>
@@ -92,7 +93,7 @@ CellScope RowScope::cell() {
         const auto id = child_id(row.cell_scope,
             {reinterpret_cast<const char*>(&index), sizeof(index)});
         const auto bounds = s.row_rects[row.first + row.next];
-        const auto clip = intersect(s.clip(), bounds);
+        const auto clip = detail::intersect_rects(s.clip(), bounds);
         s.stack.push_back({id, bounds, clip, Flow(bounds, s.theme.gap), {}, 0, 0});
         s.canvas.push_clip(clip);
         if (!s.check_canvas()) return CellScope({}, 0, 0, 0);
