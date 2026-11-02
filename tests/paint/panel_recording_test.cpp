@@ -7,6 +7,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <ostream>
 #include <string>
@@ -311,4 +312,96 @@ TEST_CASE("nested panel reuse preserves bounds and indexing") {
     check_rect(packet->semantics[0].bounds, {10, 10, 180, 120});
     check_rect(packet->semantics[1].bounds, {20, 20, 160, 60});
     REQUIRE(packet->batches.size() == 3);
+}
+
+TEST_CASE("elevated panels finalize shadow, sheet and hairline around their children at close") {
+    auto textures = std::make_shared<wui::TextureStore>(1 << 20);
+    wui::Canvas canvas(textures);
+    wui::Canvas reference(textures);
+    constexpr wui::Rect viewport{0, 0, 200, 160};
+    constexpr wui::Rect outer{0, 0, 190, 150};
+    constexpr wui::Rect bounds{20, 20, 100, 60};
+    constexpr wui::Rect interior{28, 28, 84, 44};
+    constexpr wui::Color sheet{0.2f, 0.2f, 0.3f, 1};
+    constexpr wui::Color shadow{0, 0, 0, 0.8f};
+    constexpr wui::Color hairline{0.5f, 0.5f, 0.6f, 1};
+    constexpr wui::Color child{1, 1, 0, 1};
+    constexpr wui::Color sibling{1, 0, 1, 1};
+    bool with_shadow = true;
+    SUBCASE("shadow and hairline") {}
+    SUBCASE("hairline only") { with_shadow = false; }
+    const float scale = 1.5f;
+    wui::detail::PanelElevation elevation{shadow, 4, 2, hairline};
+    if (!with_shadow) elevation.shadow = {0, 0, 0, 0};
+
+    canvas.begin(viewport, scale);
+    canvas.rounded_rect(viewport, 0, {0, 0, 0, 1});
+    canvas.push_clip(outer);
+    // The provisional height is zero: shadow and hairline follow the final one.
+    const auto mark = CanvasAccess::open_panel(canvas, {7}, {}, {20, 20, 100, 0}, 8, sheet);
+    canvas.push_clip(viewport);
+    canvas.rounded_rect({20, 20, 100, 200}, 0, child); // overflows; clipped to the interior
+    canvas.pop_clip();
+    CanvasAccess::close_panel(canvas, mark, bounds, interior, elevation);
+    canvas.pop_clip();
+    canvas.rounded_rect({0, 150, 20, 10}, 0, sibling);
+    const auto packet = finish(canvas);
+
+    // The same paint issued directly in final order.
+    reference.begin(viewport, scale);
+    reference.rounded_rect(viewport, 0, {0, 0, 0, 1});
+    reference.push_clip(outer);
+    if (with_shadow) reference.shadow({20, 22, 100, 60}, 8, 4, shadow);
+    reference.push_clip(bounds);
+    reference.rounded_rect(bounds, 8, sheet);
+    reference.pop_clip();
+    reference.push_clip(interior);
+    reference.rounded_rect({20, 20, 100, 200}, 0, child);
+    reference.pop_clip();
+    reference.push_clip(bounds);
+    reference.border(bounds, 8, 1, hairline);
+    reference.pop_clip();
+    reference.pop_clip();
+    reference.rounded_rect({0, 150, 20, 10}, 0, sibling);
+    const auto expected = finish(reference);
+
+    const std::size_t count = with_shadow ? 6 : 5;
+    REQUIRE(packet->batches.size() == count);
+    REQUIRE(expected->batches.size() == count);
+    for (std::size_t i = 0; i < count; ++i) {
+        check_draw(*packet, packet->batches[i], *expected, expected->batches[i]);
+        CHECK(packet->textures[packet->batches[i].texture_index]->rgba ==
+              expected->textures[expected->batches[i].texture_index]->rgba);
+    }
+    std::size_t next = 1;
+    if (with_shadow) {
+        const auto& shadow_batch = packet->batches[next++];
+        check_rect(shadow_batch.clip, outer); // the clip current at open, not the sheet
+        CHECK(packet->textures[shadow_batch.texture_index]->width > 1);
+    }
+    check_rect(packet->batches[next++].clip, bounds);   // sheet
+    check_rect(packet->batches[next++].clip, interior); // child
+    const auto& hairline_batch = packet->batches[next++];
+    check_rect(hairline_batch.clip, bounds);
+    check_color(drawn_vertex(*packet, hairline_batch, 0).premultiplied, hairline);
+    check_color(drawn_vertex(*packet, packet->batches[next], 0).premultiplied, sibling);
+    REQUIRE(packet->semantics.size() == 1);
+    check_rect(packet->semantics[0].bounds, bounds);
+}
+
+TEST_CASE("panel elevation input is validated at close") {
+    auto textures = std::make_shared<wui::TextureStore>(1 << 20);
+    wui::Canvas canvas(textures);
+    canvas.begin({0, 0, 100, 100}, 1);
+    wui::detail::PanelElevation elevation{{0, 0, 0, 0.5f}, 4, 2, {1, 1, 1, 1}};
+    SUBCASE("non-finite sigma") { elevation.shadow_sigma = std::numeric_limits<float>::quiet_NaN(); }
+    SUBCASE("non-finite offset") { elevation.shadow_offset = std::numeric_limits<float>::infinity(); }
+    SUBCASE("invalid hairline color") { elevation.hairline.a = 2; }
+    SUBCASE("a sigma below the shadow range") { elevation.shadow_sigma = 0.1f; }
+    const auto mark = CanvasAccess::open_panel(canvas, {8}, {}, {10, 10, 50, 0}, 4, {1, 0, 0, 1});
+    REQUIRE_FALSE(CanvasAccess::failed(canvas));
+    CanvasAccess::close_panel(canvas, mark, {10, 10, 50, 30}, {12, 12, 46, 26}, elevation);
+    const auto result = canvas.finish();
+    REQUIRE(std::holds_alternative<wui::Error>(result));
+    CHECK(std::get<wui::Error>(result).code == wui::ErrorCode::invalid_argument);
 }
