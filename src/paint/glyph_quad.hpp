@@ -9,8 +9,15 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <type_traits>
 
 namespace wui::detail {
+
+// The packed version loads each Rect as four consecutive floats and stores
+// a vertex's position and uv, then its color, as four floats each (the
+// Vertex layout is asserted in draw.hpp).
+static_assert(std::is_standard_layout_v<Rect> && sizeof(Rect) == 4 * sizeof(float));
+static_assert(std::is_standard_layout_v<Color> && sizeof(Color) == 4 * sizeof(float));
 
 // What Canvas::image does with one glyph of a run, its bounds moved by the
 // run's offset: fail (invalid bounds or uv), skip (empty bounds), or append

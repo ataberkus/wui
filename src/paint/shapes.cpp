@@ -546,8 +546,9 @@ public:
         const bool stale = recording.stamp == 0 || recording.refused ||
                            recording.used > 2 * live_points_;
         live_points_ = 0;
-        // Any value other than the slots' stamps works for a new frame: a
-        // repeat after 2^32 frames only overstates live_points_ for a frame.
+        // A new frame needs a value no slot's `frame` holds. After 2^32
+        // frames one can repeat; that shape then goes uncounted in
+        // live_points_ for a frame, which at most starts a generation early.
         ++frame_;
         if (!stale) {
             return;
