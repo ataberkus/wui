@@ -34,7 +34,7 @@ bool emit_button(FrameState& frame, std::string_view key, std::string_view label
             if (frame.check_canvas()) {
                 const float x = content.x + align_offset(options.label_align, content.w, run->width);
                 frame.glyphs(*run, {x, row.y + (row.h - run->height) * 0.5f},
-                             options.enabled ? theme.text : theme.secondary);
+                             options.enabled ? readable_ink(theme, fill) : disabled_ink(theme));
             }
         }
         if (frame.check_canvas()) {
