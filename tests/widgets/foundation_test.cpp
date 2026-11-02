@@ -680,6 +680,58 @@ TEST_CASE("widget capacity includes panels and text and resets each frame") {
     CHECK(packet->semantics.size() == 2);
 }
 
+TEST_CASE("an editor or a grid can be the last widget the per-frame limit admits") {
+    enum class Last { button, text_input, text_area, numeric_input, data_grid };
+    constexpr std::array<const char*, 5> names{
+        "button", "text_input", "text_area", "numeric_input", "data_grid"};
+    for (const auto last : {Last::button, Last::text_input, Last::text_area,
+                            Last::numeric_input, Last::data_grid}) {
+        const std::string name = names[static_cast<std::size_t>(last)];
+        CAPTURE(name);
+        auto desc = fixture_desc();
+        desc.max_widgets = 3;
+        auto context = make_context(std::move(desc));
+        std::string text = "x";
+        double number = 1;
+        std::optional<std::size_t> selected;
+        wui::GridSort sort;
+        const std::array<wui::GridColumn, 1> columns{{{"A", 120}}};
+        const auto cell = [](std::size_t, std::size_t) { return std::string("cell"); };
+        // `before` buttons, then the widget under test.
+        const auto emit = [&](std::size_t before) {
+            auto frame = begin(*context);
+            for (std::size_t i = 0; i < before; ++i)
+                frame.button("button-" + std::to_string(i), "Button");
+            switch (last) {
+            case Last::button: frame.button("last", "Last"); break;
+            case Last::text_input: frame.text_input("last", "Last", text); break;
+            case Last::text_area: frame.text_area("last", "Last", text, 80); break;
+            case Last::numeric_input: frame.numeric_input("last", "Last", number, 0.0, 9.0); break;
+            case Last::data_grid:
+                frame.data_grid("last", "Last", columns, 3, cell, selected, sort, 120);
+                break;
+            }
+            return frame.finish();
+        };
+        // Exactly max_widgets widgets: admitted on every frame, the first
+        // one (which creates editor or grid state) included.
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            auto admitted = emit(2);
+            CHECK(std::holds_alternative<wui::DrawPacket>(admitted));
+            if (const auto* packet = std::get_if<wui::DrawPacket>(&admitted))
+                CHECK((*packet)->semantics.size() >= 3);
+        }
+        // One widget more is still refused.
+        auto refused = emit(3);
+        REQUIRE(std::holds_alternative<wui::Error>(refused));
+        CHECK(std::get<wui::Error>(refused).code == wui::ErrorCode::capacity);
+        CHECK(std::get<wui::Error>(refused).message == "Per-frame widget limit exceeded");
+        CHECK(std::holds_alternative<wui::DrawPacket>(emit(2)));
+        CHECK(text == "x");
+        CHECK(number == 1);
+    }
+}
+
 TEST_CASE("retained allocation capacity becomes available after 120 absent completed frames") {
     auto desc = fixture_desc();
     desc.max_retained_bytes = 4096;

@@ -134,10 +134,8 @@ EditState* FrameState::edit_state(Id id) {
     if (error) return nullptr;
     auto found = edits.find(id.value);
     if (found == edits.end()) {
-        if (count == max_widgets) {
-            report(ErrorCode::capacity, "Per-frame widget limit exceeded");
-            return nullptr;
-        }
+        // Like grid_state, no widget limit check: every caller registered this
+        // id first, and register_widget already counted it against max_widgets.
         assert(widgets.contains(id.value) && "editor state needs a registered widget");
         EditState state{std::pmr::string{&memory}, std::pmr::string{&memory},
                         std::pmr::string{&memory}, std::pmr::vector<EditSnapshot>{&memory},
