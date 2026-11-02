@@ -113,8 +113,9 @@ void Frame::heading(std::string_view value) {
 bool Frame::button(std::string_view key, std::string_view label, WidgetOptions options) {
     if (!state_) { (void)missing_frame(); return false; }
     try {
-        return state_->usable(generation_) &&
-               detail::emit_button(*state_, key, label, state_->effective(options));
+        if (!state_->usable(generation_)) return false;
+        state_->apply_scopes(options);
+        return detail::emit_button(*state_, key, label, options);
     } catch (const std::bad_alloc&) { state_->report(ErrorCode::capacity, "Button emission allocation failed"); }
       catch (const std::length_error&) { state_->report(ErrorCode::capacity, "Button emission exceeds container limits"); }
     return false;
@@ -123,8 +124,9 @@ bool Frame::icon_button(std::string_view key, std::string_view label,
                         TextureHandle image, WidgetOptions options) {
     if (!state_) { (void)missing_frame(); return false; }
     try {
-        return state_->usable(generation_) &&
-               detail::emit_icon_button(*state_, key, label, image, state_->effective(options));
+        if (!state_->usable(generation_)) return false;
+        state_->apply_scopes(options);
+        return detail::emit_icon_button(*state_, key, label, image, options);
     } catch (const std::bad_alloc&) { state_->report(ErrorCode::capacity, "Icon button allocation failed"); }
       catch (const std::length_error&) { state_->report(ErrorCode::capacity, "Icon button exceeds container limits"); }
     return false;

@@ -9,7 +9,7 @@ namespace wui::detail {
 // `frame.error` alone decides, and paint on a failed canvas is ignored, so
 // only the check guarding interaction routing and the final report remain.
 bool emit_button(FrameState& frame, std::string_view key, std::string_view label,
-                 WidgetOptions options) {
+                 const WidgetOptions& options) {
     const Id id = frame.keyed_id(key);
     auto* state = frame.register_widget(id);
     if (!state || !frame.copy_label(label)) return false;

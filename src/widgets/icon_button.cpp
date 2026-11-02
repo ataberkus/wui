@@ -11,7 +11,7 @@ namespace wui::detail {
 // keeps the first error, so a check is only needed where it guards something
 // other than paint (interaction routing) and once at the end to report.
 bool emit_icon_button(FrameState& frame, std::string_view key, std::string_view label,
-                      TextureHandle image, WidgetOptions options) {
+                      TextureHandle image, const WidgetOptions& options) {
     if (label.empty()) {
         frame.report(ErrorCode::invalid_argument, "Icon buttons need an accessible label", true);
         return false;

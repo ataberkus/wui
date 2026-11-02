@@ -192,9 +192,13 @@ struct FrameState {
     std::shared_ptr<const TextRun> shape(std::string_view, FontRole, float size = 0);
     // Folds enclosing disabled style scopes into the caller's options.
     WidgetOptions effective(WidgetOptions options) const {
+        apply_scopes(options);
+        return options;
+    }
+    // effective() in place, for a caller that owns its copy of the options.
+    void apply_scopes(WidgetOptions& options) const {
         for (const auto& scope : style_stack)
             if (scope.disabled) options.enabled = false;
-        return options;
     }
     void close_area(std::uint64_t, std::size_t depth) noexcept;
     void glyphs(const TextRun&, Vec2 top_left, Color);
@@ -263,9 +267,10 @@ inline std::optional<Vec2> focused_text_caret(const FrameState& frame) {
 // operations report failures on FrameState. No model pointer escapes the call.
 void emit_text(FrameState&, std::string_view, FontRole, TextOptions = {},
                bool description = false, bool validation = false);
-bool emit_button(FrameState&, std::string_view key, std::string_view label, WidgetOptions);
+bool emit_button(FrameState&, std::string_view key, std::string_view label,
+                 const WidgetOptions&);
 bool emit_icon_button(FrameState&, std::string_view key, std::string_view label,
-                      TextureHandle image, WidgetOptions);
+                      TextureHandle image, const WidgetOptions&);
 bool emit_checkbox(FrameState&, std::string_view key, std::string_view label, bool&, WidgetOptions);
 bool emit_slider(FrameState&, std::string_view key, std::string_view label,
                  float&, float min, float max, WidgetOptions);
