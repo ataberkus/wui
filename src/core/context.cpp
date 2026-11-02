@@ -233,6 +233,9 @@ std::shared_ptr<const TextRun> FrameState::shape(std::string_view value, FontRol
     return run;
 }
 void FrameState::glyphs(const TextRun& run, Vec2 top_left, Color color) {
+    // A per-glyph check never ran for an empty run, so neither does the check
+    // below: an earlier unchecked canvas failure is still reported where it was.
+    if (run.glyphs.empty()) return;
     for (const auto& glyph : run.glyphs) {
         Rect bounds = glyph.bounds;
         // A6 already includes its baseline in each glyph's y-down bounds.
