@@ -1270,3 +1270,118 @@ TEST_CASE("rounded shapes stay exact across steady, churning and returning frame
         REQUIRE(same_packet(*actual, *expected));
     }
 }
+
+namespace {
+
+// Strokes and polygons of every mesh-cache path: round joins and caps,
+// carets, a concave polygon whose fringe folds (hard edge), a convex
+// chevron, repeats within one frame, and a stroke that falls back to a
+// coverage raster (never recorded).
+void draw_mesh_scene(wui::Canvas& canvas, float offset, float width) {
+    const std::array check{wui::Vec2{10 + offset, 20}, wui::Vec2{14 + offset, 25},
+                           wui::Vec2{24 + offset, 12}};
+    canvas.line(check, width, {1, 1, 1, 1});
+    const std::array caret{wui::Vec2{40, 10 + offset}, wui::Vec2{40, 30 + offset}};
+    canvas.line(caret, 1, {0.9f, 0.9f, 0.9f, 1});
+    const std::array chevron{wui::Vec2{60 + offset, 10}, wui::Vec2{70 + offset, 10},
+                             wui::Vec2{65 + offset, 16}};
+    canvas.polygon(chevron, {0.5f, 0.5f, 0.5f, 1});
+    const std::array spike{wui::Vec2{80, 40}, wui::Vec2{120, 40}, wui::Vec2{100.5f, 41},
+                           wui::Vec2{100, 80}, wui::Vec2{99.5f, 41}};
+    canvas.polygon(spike, {0.2f, 0.7f, 0.3f, 0.75f});
+    const std::array closed{wui::Vec2{10, 60}, wui::Vec2{40, 60 + offset}, wui::Vec2{25, 90},
+                            wui::Vec2{10, 60}};
+    canvas.polygon(closed, {1, 0, 0, 0.5f});
+    const std::array reversal{wui::Vec2{50, 60}, wui::Vec2{70, 60}, wui::Vec2{52, 61}};
+    canvas.line(reversal, 2, {1, 1, 0, 1});
+    canvas.line(check, width, {0, 0, 1, 0.5f}); // repeat, another color
+}
+
+} // namespace
+
+TEST_CASE("line and polygon meshes reused across frames match a fresh tessellation") {
+    auto textures = std::make_shared<wui::TextureStore>(4 * 1024 * 1024);
+    wui::Canvas reused(textures, 1);
+    for (const float scale : {1.0f, 1.25f}) {
+        for (const auto [offset, width] :
+             {std::pair{0.0f, 2.0f}, std::pair{0.0f, 2.0f}, std::pair{3.5f, 2.0f},
+              std::pair{0.0f, 2.0f}, std::pair{0.0f, 1.5f}, std::pair{3.5f, 2.0f},
+              std::pair{0.0f, 2.0f}, std::pair{-0.0f, 2.0f}}) {
+            reused.begin({0, 0, 200, 120}, scale);
+            draw_mesh_scene(reused, offset, width);
+            const auto actual = packet(reused);
+            wui::Canvas fresh(textures, 1);
+            fresh.begin({0, 0, 200, 120}, scale);
+            draw_mesh_scene(fresh, offset, width);
+            const auto expected = packet(fresh);
+            CHECK(same_packet(*actual, *expected));
+        }
+    }
+}
+
+TEST_CASE("cached polygons keep their validation and clipping behavior") {
+    auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
+    wui::Canvas canvas(textures);
+    const std::array valid{wui::Vec2{10, 10}, wui::Vec2{30, 10}, wui::Vec2{20, 25}};
+    const std::array crossing{wui::Vec2{10, 10}, wui::Vec2{30, 30}, wui::Vec2{30, 10},
+                              wui::Vec2{10, 30}};
+    const std::array caret{wui::Vec2{50, 10}, wui::Vec2{50, 30}};
+    for (int frame = 0; frame < 3; ++frame) {
+        // Recorded or reused: drawn when visible, skipped (without error)
+        // under an empty clip.
+        canvas.begin({0, 0, 100, 100}, 1.0f);
+        canvas.push_clip({200, 200, 5, 5});
+        canvas.polygon(valid, {1, 1, 1, 1});
+        canvas.line(caret, 1, {1, 1, 1, 1});
+        canvas.pop_clip();
+        const auto hidden = packet(canvas);
+        CHECK(hidden->indices.empty());
+
+        canvas.begin({0, 0, 100, 100}, 1.0f);
+        canvas.polygon(valid, {1, 1, 1, 1});
+        canvas.line(caret, 1, {1, 1, 1, 1});
+        const auto shown = packet(canvas);
+        CHECK(shown->indices.size() > 0);
+
+        // Invalid outlines are never recorded and fail every time, visible or not.
+        for (const bool clipped : {false, true}) {
+            canvas.begin({0, 0, 100, 100}, 1.0f);
+            canvas.polygon(valid, {1, 1, 1, 1});
+            if (clipped) canvas.push_clip({200, 200, 5, 5});
+            canvas.polygon(crossing, {1, 1, 1, 1});
+            if (clipped) canvas.pop_clip();
+            const auto failed = canvas.finish();
+            REQUIRE(std::holds_alternative<wui::Error>(failed));
+            CHECK(std::get<wui::Error>(failed).code == wui::ErrorCode::invalid_argument);
+        }
+    }
+}
+
+TEST_CASE("strokes beyond the mesh cache bounds are still drawn every frame") {
+    auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
+    wui::Canvas reused(textures);
+    const std::size_t count = wui::detail::mesh_cache_entry_limit;
+    // Set A alone overflows the entry bound. Frame 1 fills a fresh
+    // generation with set B before A, so A is found in the previous
+    // generation but cannot be carried over; frame 2 meets A in neither.
+    const auto draw = [&](wui::Canvas& canvas, float y, std::size_t extra) {
+        for (std::size_t i = 0; i < count + extra; ++i) {
+            const float x = static_cast<float>(i % 64) * 60.0f;
+            const float top = y + static_cast<float>(i / 64) * 30.0f;
+            const std::array caret{wui::Vec2{x, top}, wui::Vec2{x, top + 10}};
+            canvas.line(caret, 1, {1, 1, 1, 1});
+        }
+    };
+    const auto frame = [&](wui::Canvas& canvas, bool with_b) {
+        canvas.begin({0, 0, 4096, 8192}, 1.0f);
+        if (with_b) draw(canvas, 4096.0f, 0);
+        draw(canvas, 0.0f, 50);
+        return packet(canvas);
+    };
+    for (const bool with_b : {false, true, false, false}) {
+        const auto actual = frame(reused, with_b);
+        wui::Canvas fresh(textures);
+        const auto expected = frame(fresh, with_b);
+        CHECK(same_packet(*actual, *expected));
+    }
+}

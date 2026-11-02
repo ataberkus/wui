@@ -683,6 +683,236 @@ private:
     std::size_t live_points_ = 0;
 };
 
+// Cross-frame memo of the meshes Canvas::line and Canvas::polygon build.
+// Their outline, fringe and interior triangles are pure functions of the
+// exact deduplicated input points, the stroke half width (lines) and the
+// scale, and the validation and tessellation that produce them (simple
+// outline tests, ear clipping, round joins and caps) are quadratic in the
+// outline size, so a mesh that was accepted earlier is reused bit for bit.
+// Only accepted meshes are recorded: invalid polygons and strokes that fall
+// back to coverage rasters take their full path every time. Generations
+// work as in OutlineCache; requests are compared by their exact bits.
+class MeshCache {
+public:
+    static constexpr std::size_t max_entries = detail::mesh_cache_entry_limit;
+    static constexpr std::size_t max_points = detail::mesh_cache_point_limit;
+    static constexpr std::size_t max_indices = detail::mesh_cache_index_limit;
+
+    enum class Kind : std::uint32_t { polygon, line };
+    struct Request {
+        Kind kind = Kind::polygon;
+        std::span<const Vec2> points;
+        float half_width = 0; // lines only
+        float scale = 1;
+    };
+    struct Mesh {
+        std::span<const Vec2> outline;
+        std::span<const Vec2> fringe; // same length as outline
+        std::span<const std::uint32_t> interior;
+    };
+
+    static std::uint64_t hash(const Request& request) {
+        std::uint64_t value = (std::uint64_t{static_cast<std::uint32_t>(request.kind)} << 32) ^
+                              request.points.size();
+        const auto mix = [&value](std::uint64_t word) {
+            value = (value ^ word) * 0x9e3779b97f4a7c15ull;
+            value ^= value >> 32;
+        };
+        mix(std::bit_cast<std::uint32_t>(request.half_width) |
+            (std::uint64_t{std::bit_cast<std::uint32_t>(request.scale)} << 32));
+        for (const auto point : request.points) {
+            mix(std::bit_cast<std::uint64_t>(point));
+        }
+        return value;
+    }
+
+    // Called at the start of each frame; same policy as OutlineCache.
+    void rotate() noexcept {
+        const auto& recording = generations_[recording_];
+        const bool stale = recording.stamp == 0 || recording.refused ||
+                           recording.used_points > 2 * live_points_;
+        live_points_ = 0;
+        ++frame_;
+        if (!stale) {
+            return;
+        }
+        std::swap(recording_, previous_);
+        auto& next = generations_[recording_];
+        next.used_points = next.used_indices = next.entries = 0;
+        next.refused = false;
+        if (++stamp_ == 0) { // after 2^32 rotations: forget every slot explicitly
+            for (auto& generation : generations_) {
+                for (auto& slot : generation.slots) slot.stamp = 0;
+            }
+            generations_[previous_].stamp = 0;
+            stamp_ = 1;
+        }
+        next.stamp = stamp_;
+    }
+
+    // The mesh recorded for `request` in the recording or the previous
+    // generation; one from the previous generation is carried over.
+    std::optional<Mesh> find(const Request& request, std::uint64_t request_hash) {
+        auto& current = generations_[recording_];
+        if (auto* slot = lookup(current, request, request_hash)) {
+            if (slot->frame != frame_) {
+                slot->frame = frame_;
+                live_points_ += slot->key_count + std::size_t{slot->outline_count} * 2;
+            }
+            return view(current, *slot);
+        }
+        auto& previous = generations_[previous_];
+        if (const auto* slot = lookup(previous, request, request_hash)) {
+            const auto mesh = view(previous, *slot);
+            if (const auto carried =
+                    record(request, request_hash, mesh.outline, mesh.fringe, mesh.interior)) {
+                return carried;
+            }
+            return mesh; // stays valid until the next rotate()
+        }
+        return std::nullopt;
+    }
+
+    // Copies an accepted mesh into the recording generation and returns the
+    // stored copy, or nothing beyond the per-generation bounds.
+    std::optional<Mesh> record(const Request& request, std::uint64_t request_hash,
+                               std::span<const Vec2> outline, std::span<const Vec2> fringe,
+                               std::span<const std::uint32_t> interior) {
+        auto& current = generations_[recording_];
+        const auto points = request.points.size() + outline.size() * 2;
+        if (outline.size() != fringe.size()) {
+            return std::nullopt;
+        }
+        if (current.entries >= max_entries || current.used_points + points > max_points ||
+            current.used_indices + interior.size() > max_indices) {
+            current.refused = true;
+            return std::nullopt;
+        }
+        if ((current.entries + 1) * 2 > current.slots.size()) {
+            grow_slots(current);
+        }
+        grow(current.points, current.point_capacity, current.used_points,
+             current.used_points + points, max_points);
+        grow(current.indices, current.index_capacity, current.used_indices,
+             current.used_indices + interior.size(), max_indices);
+        Slot slot;
+        slot.hash = request_hash;
+        slot.kind = static_cast<std::uint32_t>(request.kind);
+        slot.half_width = std::bit_cast<std::uint32_t>(request.half_width);
+        slot.scale = std::bit_cast<std::uint32_t>(request.scale);
+        slot.point_offset = static_cast<std::uint32_t>(current.used_points);
+        slot.key_count = static_cast<std::uint32_t>(request.points.size());
+        slot.outline_count = static_cast<std::uint32_t>(outline.size());
+        slot.index_offset = static_cast<std::uint32_t>(current.used_indices);
+        slot.index_count = static_cast<std::uint32_t>(interior.size());
+        slot.stamp = current.stamp;
+        slot.frame = frame_;
+        Vec2* out = current.points.get() + current.used_points;
+        out = std::copy(request.points.begin(), request.points.end(), out);
+        out = std::copy(outline.begin(), outline.end(), out);
+        std::copy(fringe.begin(), fringe.end(), out);
+        std::copy(interior.begin(), interior.end(), current.indices.get() + current.used_indices);
+        current.used_points += points;
+        current.used_indices += interior.size();
+        auto* stored = probe(current, request, request_hash);
+        *stored = slot;
+        ++current.entries;
+        live_points_ += points;
+        return view(current, *stored);
+    }
+
+private:
+    struct Slot {
+        std::uint64_t hash = 0;
+        std::uint32_t kind = 0, half_width = 0, scale = 0; // request bits
+        // The request's points, then outline_count outline and fringe points.
+        std::uint32_t point_offset = 0, key_count = 0, outline_count = 0;
+        std::uint32_t index_offset = 0, index_count = 0;
+        std::uint32_t stamp = 0; // live while equal to its generation's stamp
+        std::uint32_t frame = 0; // the last frame that used the mesh
+    };
+    struct Generation {
+        std::unique_ptr<Vec2[]> points;
+        std::unique_ptr<std::uint32_t[]> indices;
+        std::size_t point_capacity = 0, used_points = 0;
+        std::size_t index_capacity = 0, used_indices = 0;
+        std::vector<Slot> slots; // open addressing; size is zero or a power of two
+        std::size_t entries = 0;
+        std::uint32_t stamp = 0;
+        bool refused = false; // a mesh did not fit since the generation started
+    };
+
+    static Mesh view(const Generation& generation, const Slot& slot) {
+        const auto* outline = generation.points.get() + slot.point_offset + slot.key_count;
+        return {{outline, slot.outline_count},
+                {outline + slot.outline_count, slot.outline_count},
+                {generation.indices.get() + slot.index_offset, slot.index_count}};
+    }
+    static bool matches(const Generation& generation, const Slot& slot, const Request& request,
+                        std::uint64_t request_hash) {
+        if (slot.hash != request_hash || slot.kind != static_cast<std::uint32_t>(request.kind) ||
+            slot.half_width != std::bit_cast<std::uint32_t>(request.half_width) ||
+            slot.scale != std::bit_cast<std::uint32_t>(request.scale) ||
+            slot.key_count != request.points.size()) {
+            return false;
+        }
+        const auto* key = generation.points.get() + slot.point_offset;
+        return std::equal(request.points.begin(), request.points.end(), key,
+                          [](Vec2 a, Vec2 b) {
+                              return std::bit_cast<std::uint64_t>(a) ==
+                                     std::bit_cast<std::uint64_t>(b);
+                          });
+    }
+    // The live slot holding `request`, or the first free slot of its probe run.
+    static Slot* probe(Generation& generation, const Request& request,
+                       std::uint64_t request_hash) {
+        const auto mask = generation.slots.size() - 1;
+        for (auto index = static_cast<std::size_t>(request_hash) & mask;;
+             index = (index + 1) & mask) {
+            auto& slot = generation.slots[index];
+            if (slot.stamp != generation.stamp || matches(generation, slot, request, request_hash)) {
+                return &slot;
+            }
+        }
+    }
+    static Slot* lookup(Generation& generation, const Request& request,
+                        std::uint64_t request_hash) {
+        if (generation.entries == 0 || generation.stamp == 0) return nullptr;
+        auto* slot = probe(generation, request, request_hash);
+        return slot->stamp == generation.stamp ? slot : nullptr;
+    }
+    // Doubles the table (kept at most half full) and re-inserts live slots,
+    // which are distinct requests: each goes to the first free slot of its run.
+    static void grow_slots(Generation& generation) {
+        std::vector<Slot> slots(std::max<std::size_t>(16, generation.slots.size() * 2));
+        std::swap(slots, generation.slots);
+        const auto mask = generation.slots.size() - 1;
+        for (const auto& slot : slots) {
+            if (slot.stamp != generation.stamp) continue;
+            auto index = static_cast<std::size_t>(slot.hash) & mask;
+            while (generation.slots[index].stamp == generation.stamp) index = (index + 1) & mask;
+            generation.slots[index] = slot;
+        }
+    }
+    template <typename T>
+    static void grow(std::unique_ptr<T[]>& storage, std::size_t& capacity, std::size_t used,
+                     std::size_t needed, std::size_t limit) {
+        if (needed <= capacity) return;
+        const auto next = std::min(limit, std::max({needed, capacity * 2, std::size_t{256}}));
+        auto grown = std::make_unique<T[]>(next);
+        std::copy(storage.get(), storage.get() + used, grown.get());
+        storage = std::move(grown);
+        capacity = next;
+    }
+
+    std::array<Generation, 2> generations_;
+    std::size_t recording_ = 0, previous_ = 1;
+    std::uint32_t stamp_ = 0;
+    std::uint32_t frame_ = 0;
+    // Points of the recording generation's meshes used in the current frame.
+    std::size_t live_points_ = 0;
+};
+
 bool coherent_fringe(std::span<const Vec2> inner, std::span<const Vec2> outer) {
     if (!simple_outline(outer)) {
         return false;
@@ -1472,6 +1702,7 @@ struct Canvas::Impl {
     std::vector<Vec2> outline_scratch, fringe_scratch, clean_scratch, direction_scratch,
                       normal_scratch, plus_scratch, minus_scratch;
     OutlineCache outline_cache;
+    MeshCache mesh_cache;
     std::vector<std::uint32_t> remaining_scratch, triangle_scratch;
     // Detached overlay layers: batch descriptors moved out of the main order
     // and appended above it by flush_layers().
@@ -1490,6 +1721,7 @@ void Canvas::begin(Rect viewport, float scale) {
     }
     impl_->frame_error = impl_->construction_error;
     impl_->outline_cache.rotate();
+    impl_->mesh_cache.rotate();
     impl_->pending_batches.clear();
     impl_->clips.clear();
     impl_->merge_barrier = false;
@@ -1728,6 +1960,15 @@ void Canvas::polygon(std::span<const Vec2> points, Color color) {
             impl_->fail({ErrorCode::capacity, "Polygon point limit exceeded"});
             return;
         }
+        // A recorded mesh is one this outline passed validation with before.
+        const MeshCache::Request request{MeshCache::Kind::polygon, clean, 0.0f,
+                                         impl_->current->scale};
+        const auto request_hash = MeshCache::hash(request);
+        if (const auto cached = impl_->mesh_cache.find(request, request_hash)) {
+            if (impl_->clips.back().w == 0.0f || impl_->clips.back().h == 0.0f) return;
+            impl_->polygon_unchecked(cached->outline, color, cached->interior, cached->fringe);
+            return;
+        }
         auto& interior = impl_->triangle_scratch;
         if (!simple_outline(clean) ||
             (triangulate_simple(clean, impl_->remaining_scratch, interior), interior.empty())) {
@@ -1740,6 +1981,12 @@ void Canvas::polygon(std::span<const Vec2> points, Color color) {
         // Sharp concave spikes can fold the offset ring; such outlines keep a
         // hard edge instead of overlapping translucent fringe triangles.
         if (!coherent_fringe(clean, outer)) outer.assign(clean.begin(), clean.end());
+        if (const auto recorded =
+                impl_->mesh_cache.record(request, request_hash, clean, outer, interior)) {
+            impl_->polygon_unchecked(recorded->outline, color, recorded->interior,
+                                     recorded->fringe);
+            return;
+        }
         impl_->polygon_unchecked(clean, color, interior, outer);
     } catch (const std::bad_alloc&) {
         impl_->fail({ErrorCode::capacity, "Polygon allocation failed"});
@@ -1772,6 +2019,14 @@ void Canvas::line(std::span<const Vec2> points, float width, Color color) {
                 clean.push_back(point);
             }
         }
+        // A recorded mesh is the one this exact stroke produced before.
+        const MeshCache::Request request{MeshCache::Kind::line, clean, half,
+                                         impl_->current->scale};
+        const auto request_hash = MeshCache::hash(request);
+        if (const auto cached = impl_->mesh_cache.find(request, request_hash)) {
+            impl_->polygon_unchecked(cached->outline, color, cached->interior, cached->fringe);
+            return;
+        }
         bool mesh_candidate = clean.size() >= 2 && half > epsilon &&
                               finite(half * impl_->current->scale) &&
                               clean.size() <= detail::stroke_mesh_point_limit;
@@ -1800,6 +2055,12 @@ void Canvas::line(std::span<const Vec2> points, float width, Color color) {
                     if (!interior.empty()) {
                         // One connected interior and exterior fringe avoid translucent
                         // overdraw at segment joins and round caps.
+                        if (const auto recorded = impl_->mesh_cache.record(
+                                request, request_hash, outline, outer, interior)) {
+                            impl_->polygon_unchecked(recorded->outline, color,
+                                                     recorded->interior, recorded->fringe);
+                            return;
+                        }
                         impl_->polygon_unchecked(outline, color, interior, outer);
                         return;
                     }

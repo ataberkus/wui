@@ -12,6 +12,12 @@ inline constexpr std::size_t shadow_cache_capacity = 32;
 inline constexpr std::size_t outline_cache_entry_limit = std::size_t{1} << 15;
 inline constexpr std::size_t outline_cache_point_limit = std::size_t{1} << 20;
 
+// Per-generation bounds of the cross-frame cache of line and polygon meshes
+// (points count the request's own points as well as outline and fringe).
+inline constexpr std::size_t mesh_cache_entry_limit = 4096;
+inline constexpr std::size_t mesh_cache_point_limit = std::size_t{1} << 18;
+inline constexpr std::size_t mesh_cache_index_limit = std::size_t{1} << 18;
+
 // Per-stroke fallback limits; total live pixel storage also obeys TextureStore.
 inline constexpr std::size_t stroke_point_limit = 4096;
 inline constexpr std::size_t stroke_mesh_point_limit = 512;
