@@ -851,3 +851,39 @@ TEST_CASE("rounded shapes beyond the outline cache bounds are still drawn every 
         }
     }
 }
+
+TEST_CASE("rounded shapes recorded only in the previous frame are reused when the cache is full") {
+    auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
+    wui::Canvas reused(textures);
+    const std::size_t count = wui::detail::outline_cache_entry_limit;
+    // Square-cornered shapes keep the point bound out of the way. Set A is
+    // recorded in frame 0. Frame 1 fills the cache with set B before drawing
+    // A again, so A is found among the previous frame's records but cannot
+    // be carried over into the full current generation. In frame 2, A is
+    // in neither generation and is tessellated again.
+    const auto draw = [count](wui::Canvas& canvas, float y) {
+        for (std::size_t i = 0; i < count; ++i) {
+            canvas.rounded_rect({static_cast<float>(i % 256) * 16.0f,
+                                 y + static_cast<float>(i / 256) * 16.0f, 10, 10},
+                                0, {1, 1, 1, 1});
+        }
+    };
+    const auto frame = [&](wui::Canvas& canvas, std::initializer_list<float> sets) {
+        canvas.begin({0, 0, 4096, 8192}, 1.0f);
+        for (const float y : sets) draw(canvas, y);
+        // Signed zeros have distinct bits and tessellate to distinct vertices.
+        canvas.rounded_rect({-0.0f, 0, 10, 10}, 2, {1, 1, 1, 1});
+        canvas.rounded_rect({0.0f, 0, 10, 10}, 2, {1, 1, 1, 1});
+        return packet(canvas);
+    };
+    constexpr float set_a = 0.0f;
+    constexpr float set_b = 4096.0f;
+    for (const auto sets : {std::initializer_list<float>{set_a},
+                            std::initializer_list<float>{set_b, set_a},
+                            std::initializer_list<float>{set_a}}) {
+        const auto actual = frame(reused, sets);
+        wui::Canvas fresh(textures);
+        const auto expected = frame(fresh, sets);
+        CHECK(same_geometry(*actual, *expected));
+    }
+}
