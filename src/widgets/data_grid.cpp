@@ -241,18 +241,33 @@ GridResult emit_data_grid(FrameState& frame, std::string_view key, std::string_v
                     frame.glyphs(*hint, {body.x + pad, body.y + (row_height - hint->height) * 0.5f}, theme.secondary);
             }
             const auto pointer = frame.interaction.pointer();
+            // Bands are square, except where they reach the rounded bottom
+            // corners: there the band clips a shape with the rings' inner
+            // radius, so no square corner shows outside the outline.
+            const float bottom = inner.y + inner.h;
+            const float corner = std::max(0.0f, theme.control_radius - (inner.x - box.x));
+            const auto paint_band = [&](Rect band, Color color) {
+                if (corner <= 0.0f || band.y + band.h <= bottom - corner || band.y >= bottom) {
+                    frame.canvas.rounded_rect(band, 0, color);
+                    return;
+                }
+                WidgetClip band_clip(frame, band);
+                const float top = std::min(band.y, bottom - corner) - corner;
+                if (frame.check_canvas())
+                    frame.canvas.rounded_rect({inner.x, top, inner.w, bottom - top}, corner, color);
+            };
             for (std::size_t row = first; row < last && frame.check_canvas(); ++row) {
                 const float y = body.y - offset + static_cast<float>(row) * row_height;
                 const Rect band{box.x, y, box.w, row_height};
                 const bool chosen = selected == row;
                 Color row_ink = ink;
                 if (chosen && behavior.focused) {
-                    frame.canvas.rounded_rect(band, 0, theme.accent);
+                    paint_band(band, theme.accent);
                     row_ink = readable_ink(theme, theme.accent);
                 } else if (chosen) {
-                    frame.canvas.rounded_rect(band, 0, mix(well, theme.accent, 0.32f));
+                    paint_band(band, mix(well, theme.accent, 0.32f));
                 } else if (enabled && pointer && contains(body_hit, *pointer) && contains(band, *pointer)) {
-                    frame.canvas.rounded_rect(band, 0, mix(well, theme.accent, 0.12f));
+                    paint_band(band, mix(well, theme.accent, 0.12f));
                 }
                 for (std::size_t column = 0; column < columns.size(); ++column) {
                     const Rect cell{column_left(column), y, grid->widths[column], row_height};
@@ -270,8 +285,10 @@ GridResult emit_data_grid(FrameState& frame, std::string_view key, std::string_v
             // shortcut: the scroll indicator is not draggable; wheel and keys scroll. Make it a
             // drag target if pointer-only scrolling of long grids is needed.
             if (max_offset > 0 && frame.check_canvas()) {
-                const float thumb = std::max(row_height, view * view / (view + max_offset));
-                const float y = body.y + (view - thumb) * (offset / max_offset);
+                // The indicator stops short of the rounded bottom corner.
+                const float travel = std::max(0.0f, bottom - corner * 0.5f - body.y);
+                const float thumb = std::min(travel, std::max(row_height, travel * view / (view + max_offset)));
+                const float y = body.y + (travel - thumb) * (offset / max_offset);
                 frame.canvas.rounded_rect({inner.x + inner.w - 4, y, 3, thumb}, 1.5f, mix(well, theme.text, 0.35f));
             }
         }
