@@ -1099,6 +1099,123 @@ struct Canvas::Impl {
                        texture);
     }
 
+    // Canvas::image(glyph.bounds moved by offset, glyph.texture, glyph.uv,
+    // tint) for every glyph in order, in one pass: the tint is validated and
+    // premultiplied once, room for every glyph is made once, and each
+    // texture run is recorded with one end_mesh() call. Returns false,
+    // having done nothing, when the run's worst case would overflow the
+    // packet's index space; the caller then takes the per-glyph path, which
+    // fails at exactly the glyph where the overflow happens.
+    //
+    // Equivalence with the per-glyph path, which validates the bounds, uv
+    // and tint of each glyph (one shared error), then skips empty glyphs
+    // and empty clips, then appends one quad merged into the previous batch
+    // when the texture, clip and index range allow:
+    //  - an invalid tint fails at the first glyph, like an invalid rect;
+    //  - glyphs are validated in order; the first invalid one fails the
+    //    canvas after the glyphs before it have been appended, and the
+    //    failed canvas ignores the rest;
+    //  - under an empty clip glyphs are still validated but none is drawn;
+    //  - within a run the clip is fixed, the index range is contiguous and
+    //    no merge barrier arises, so consecutive glyphs with equal textures
+    //    land in one batch, which joins the batch before the run exactly
+    //    when the first appended quad would have.
+    // Elements written for the room of glyphs that end up skipped stay
+    // beyond the logical size, as retained storage.
+    bool glyph_run(std::span<const GlyphQuad> glyphs, Vec2 offset, Color tint) {
+        if (!ready() || glyphs.empty()) {
+            return true;
+        }
+        if (!valid_color(tint)) {
+            fail(invalid_argument("Image input must be finite and valid"));
+            return true;
+        }
+        if (clips.back().w == 0.0f || clips.back().h == 0.0f) {
+            for (const auto& glyph : glyphs) {
+                const Rect bounds{glyph.bounds.x + offset.x, glyph.bounds.y + offset.y,
+                                  glyph.bounds.w, glyph.bounds.h};
+                if (!valid_rect(bounds) || !valid_rect(glyph.uv)) {
+                    fail(invalid_argument("Image input must be finite and valid"));
+                    break;
+                }
+            }
+            return true;
+        }
+        constexpr std::size_t limit = std::numeric_limits<std::uint32_t>::max();
+        if (glyphs.size() > (limit - vertex_size) / 4 ||
+            glyphs.size() > (limit - index_size) / 6) {
+            return false;
+        }
+        Vertex* const first_vertex =
+            writable(current->vertices, vertex_size, glyphs.size() * 4);
+        std::uint32_t* const first_slot =
+            writable(current->indices, index_size, glyphs.size() * 6);
+        const auto color = premultiply_valid(tint);
+        Vertex* vertex = first_vertex;
+        std::uint32_t* index = first_slot;
+        const auto b = static_cast<std::uint32_t>(vertex_size);
+        // The texture run being written starts at the logical sizes, which
+        // advance as each run is recorded (as they would quad by quad).
+        TextureHandle texture = glyphs.front().texture;
+        const std::size_t vertex_start = vertex_size;
+        const std::size_t index_start = index_size;
+        const auto record_run = [&] {
+            const std::size_t run_end = index_start + static_cast<std::size_t>(index - first_slot);
+            if (run_end != index_size) {
+                const auto run_first = static_cast<std::uint32_t>(index_size);
+                vertex_size = vertex_start + static_cast<std::size_t>(vertex - first_vertex);
+                index_size = run_end;
+                end_mesh(run_first, texture);
+            }
+        };
+        // Indices of the next quad: two triangles over its four corners.
+        std::array<std::uint32_t, 6> quad{b, b + 1, b + 2, b, b + 2, b + 3};
+        bool invalid = false;
+        for (const auto& glyph : glyphs) {
+            // Corner coordinates as image() computes them: `low` holds the
+            // moved bounds origin and the uv origin, `high` adds the extents.
+            const std::array low{glyph.bounds.x + offset.x, glyph.bounds.y + offset.y,
+                                 glyph.uv.x, glyph.uv.y};
+            const std::array extent{glyph.bounds.w, glyph.bounds.h, glyph.uv.w, glyph.uv.h};
+            std::array<float, 4> high;
+            std::uint32_t nonfinite = 0;
+            bool nonnegative = true;
+            for (std::size_t k = 0; k < 4; ++k) {
+                high[k] = low[k] + extent[k];
+                nonfinite |= detail::nonfinite_bits(high[k]);
+                nonnegative &= extent[k] >= 0.0f;
+            }
+            // valid_rect() of the moved bounds and of the uv.
+            if ((nonfinite & detail::nonfinite_flag) != 0 || !nonnegative) {
+                invalid = true;
+                break;
+            }
+            // The extents are now known to be nonnegative: not positive is zero.
+            if (!(extent[0] > 0.0f) || !(extent[1] > 0.0f)) {
+                continue;
+            }
+            if (!(glyph.texture == texture)) {
+                record_run();
+                texture = glyph.texture;
+            }
+            vertex[0] = {{low[0], low[1]}, {low[2], low[3]}, color};
+            vertex[1] = {{high[0], low[1]}, {high[2], low[3]}, color};
+            vertex[2] = {{high[0], high[1]}, {high[2], high[3]}, color};
+            vertex[3] = {{low[0], high[1]}, {low[2], high[3]}, color};
+            vertex += 4;
+            std::copy(quad.begin(), quad.end(), index);
+            index += 6;
+            for (auto& value : quad) {
+                value += 4;
+            }
+        }
+        record_run();
+        if (invalid) {
+            fail(invalid_argument("Image input must be finite and valid"));
+        }
+        return true;
+    }
+
     void polygon_unchecked(std::span<const Vec2> points, Color color,
                            std::span<const std::uint32_t> interior = {},
                            std::span<const Vec2> outer = {}) {
@@ -1903,6 +2020,19 @@ void CanvasAccess::end_layer(Canvas& canvas, CanvasLayer layer) {
 void CanvasAccess::flush_layers(Canvas& canvas) {
     auto& impl = *canvas.impl_;
     if (impl.ready()) impl.flush_layers();
+}
+
+void CanvasAccess::glyph_run(Canvas& canvas, std::span<const GlyphQuad> glyphs, Vec2 offset,
+                             Color tint) {
+    if (canvas.impl_->glyph_run(glyphs, offset, tint)) {
+        return;
+    }
+    for (const auto& glyph : glyphs) {
+        Rect bounds = glyph.bounds;
+        bounds.x += offset.x;
+        bounds.y += offset.y;
+        canvas.image(bounds, glyph.texture, glyph.uv, tint);
+    }
 }
 
 void CanvasAccess::clear_choice_selection(Canvas& canvas, Id id) {

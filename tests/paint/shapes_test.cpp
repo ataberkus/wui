@@ -960,3 +960,196 @@ TEST_CASE("a reused packet slot publishes exactly the geometry of each frame") {
         CHECK(same_packet(*actual, *expected));
     }
 }
+
+namespace {
+
+struct GlyphRunCase {
+    std::vector<wui::GlyphQuad> glyphs;
+    wui::Vec2 offset;
+    wui::Color tint{1, 1, 1, 1};
+};
+
+struct GlyphRunOutcome {
+    wui::Status status;
+    wui::DrawPacket packet; // when finish() succeeded
+};
+
+// Paints `before`, the run, then `after`, with either the batched run or one
+// Canvas::image per glyph, and finishes the frame.
+template <typename Before, typename After>
+GlyphRunOutcome paint_glyph_run(const std::shared_ptr<wui::TextureStore>& textures,
+                                const GlyphRunCase& run, bool batched, Before before,
+                                After after) {
+    wui::Canvas canvas(textures, 1);
+    canvas.begin({0, 0, 200, 100}, 1.5f);
+    before(canvas);
+    if (batched) {
+        wui::detail::CanvasAccess::glyph_run(canvas, run.glyphs, run.offset, run.tint);
+    } else {
+        for (const auto& glyph : run.glyphs) {
+            wui::Rect bounds = glyph.bounds;
+            bounds.x += run.offset.x;
+            bounds.y += run.offset.y;
+            canvas.image(bounds, glyph.texture, glyph.uv, run.tint);
+        }
+    }
+    GlyphRunOutcome outcome;
+    outcome.status = wui::detail::CanvasAccess::status(canvas);
+    after(canvas);
+    auto finished = canvas.finish();
+    if (auto* packet = std::get_if<wui::DrawPacket>(&finished)) {
+        outcome.packet = std::move(*packet);
+    } else {
+        CHECK(outcome.status.has_value());
+    }
+    return outcome;
+}
+
+template <typename Before, typename After>
+void check_glyph_run(const std::shared_ptr<wui::TextureStore>& textures, const GlyphRunCase& run,
+                     Before before, After after) {
+    const auto expected = paint_glyph_run(textures, run, false, before, after);
+    const auto actual = paint_glyph_run(textures, run, true, before, after);
+    REQUIRE(actual.status.has_value() == expected.status.has_value());
+    if (expected.status) {
+        CHECK(actual.status->code == expected.status->code);
+        CHECK(actual.status->message == expected.status->message);
+    }
+    REQUIRE(static_cast<bool>(actual.packet) == static_cast<bool>(expected.packet));
+    if (expected.packet) {
+        CHECK_FALSE(wui::validate_packet(*actual.packet).has_value());
+        CHECK(same_packet(*actual.packet, *expected.packet));
+    }
+}
+
+} // namespace
+
+TEST_CASE("a batched glyph run matches one image per glyph") {
+    auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
+    const auto a = create_pixel(*textures, red);
+    const auto b = create_pixel(*textures, blue);
+    const auto nan = std::numeric_limits<float>::quiet_NaN();
+    const auto inf = std::numeric_limits<float>::infinity();
+    const auto glyph = [](wui::TextureHandle texture, float x, float w = 6, float h = 9) {
+        return wui::GlyphQuad{texture, {x, -7.25f, w, h}, {x / 64, 0.125f, w / 64, h / 64}};
+    };
+    const auto nothing = [](wui::Canvas&) {};
+    const auto image_a = [&](wui::Canvas& canvas) {
+        canvas.image({1, 2, 3, 4}, a, {0, 0, 1, 1}, {1, 1, 1, 1});
+    };
+    const auto image_b = [&](wui::Canvas& canvas) {
+        canvas.image({1, 2, 3, 4}, b, {0, 0, 1, 1}, {1, 1, 1, 1});
+    };
+    const auto shapes_after = [&](wui::Canvas& canvas) {
+        canvas.rounded_rect({5, 50, 40, 20}, 4, {0.5f, 0.5f, 0.5f, 1});
+        canvas.image({60, 50, 7, 7}, b, {0, 0, 1, 1}, {1, 1, 1, 0.5f});
+    };
+    const wui::Vec2 offset{10.5f, 20.25f};
+    const wui::Color tint{0.9f, 0.6f, 0.3f, 0.8f};
+
+    SUBCASE("one texture, joined to a preceding image of the same texture") {
+        const GlyphRunCase run{{glyph(a, 0), glyph(a, 7), glyph(a, 14)}, offset, tint};
+        check_glyph_run(textures, run, image_a, shapes_after);
+        check_glyph_run(textures, run, image_b, shapes_after);
+        check_glyph_run(textures, run, nothing, nothing);
+    }
+    SUBCASE("texture changes break batches") {
+        const GlyphRunCase run{{glyph(a, 0), glyph(a, 7), glyph(b, 14), glyph(b, 21),
+                                glyph(a, 28), glyph(b, 35)},
+                               offset, tint};
+        check_glyph_run(textures, run, image_a, shapes_after);
+        check_glyph_run(textures, run, image_b, shapes_after);
+    }
+    SUBCASE("a different clip or a layer keeps the run out of the previous batch") {
+        const GlyphRunCase run{{glyph(a, 0), glyph(a, 7)}, offset, tint};
+        check_glyph_run(textures, run, [&](wui::Canvas& canvas) {
+            image_a(canvas);
+            canvas.push_clip({0, 0, 150, 90});
+        }, [](wui::Canvas& canvas) { canvas.pop_clip(); });
+        wui::detail::CanvasLayer layer;
+        check_glyph_run(textures, run, [&](wui::Canvas& canvas) {
+            image_a(canvas);
+            layer = wui::detail::CanvasAccess::begin_layer(canvas, {0, 0, 120, 80});
+        }, [&](wui::Canvas& canvas) {
+            wui::detail::CanvasAccess::end_layer(canvas, layer);
+            shapes_after(canvas);
+        });
+    }
+    SUBCASE("empty glyphs are skipped wherever they are") {
+        check_glyph_run(textures, {{glyph(b, 0, 0, 9), glyph(a, 7), glyph(a, 14, 6, 0),
+                                    glyph(b, 21, 0, 0), glyph(a, 28), glyph(b, 35, 0)},
+                                   offset, tint},
+                        image_a, shapes_after);
+        check_glyph_run(textures, {{glyph(b, 0, 0, 9), glyph(a, 7, 4, 0)}, offset, tint},
+                        image_a, shapes_after);
+        check_glyph_run(textures, {{glyph(a, 0), glyph(b, 7, 0, 3), glyph(a, 14)}, offset, tint},
+                        image_b, shapes_after);
+    }
+    SUBCASE("an empty run draws nothing") {
+        check_glyph_run(textures, {{}, offset, tint}, image_a, shapes_after);
+        check_glyph_run(textures, {{}, offset, {nan, 0, 0, 1}}, image_a, shapes_after);
+    }
+    SUBCASE("an invalid glyph fails at its position") {
+        for (const auto bad : {wui::GlyphQuad{a, {nan, 0, 6, 9}, {0, 0, 1, 1}},
+                               wui::GlyphQuad{a, {0, 0, -1, 9}, {0, 0, 1, 1}},
+                               wui::GlyphQuad{a, {0, 0, 6, inf}, {0, 0, 1, 1}},
+                               wui::GlyphQuad{a, {3.0e38f, 0, 6, 9}, {0, 0, 1, 1}},
+                               wui::GlyphQuad{a, {0, 0, 6, 9}, {0, nan, 1, 1}},
+                               wui::GlyphQuad{a, {0, 0, 6, 9}, {0, 0, 1, -0.5f}},
+                               wui::GlyphQuad{a, {nan, 0, 0, 0}, {0, 0, 1, 1}}}) {
+            for (std::size_t at = 0; at < 4; ++at) {
+                std::vector<wui::GlyphQuad> glyphs{glyph(a, 0), glyph(b, 7), glyph(b, 14, 0),
+                                                   glyph(a, 21)};
+                glyphs.insert(glyphs.begin() + static_cast<std::ptrdiff_t>(at), bad);
+                check_glyph_run(textures, {glyphs, offset, tint}, image_a, shapes_after);
+                // A later invalid glyph is never reached.
+                glyphs.push_back(wui::GlyphQuad{a, {nan, nan, nan, nan}, {}});
+                check_glyph_run(textures, {glyphs, {3.0e38f, 0}, tint}, image_a, shapes_after);
+                check_glyph_run(textures, {glyphs, offset, tint}, image_a, shapes_after);
+            }
+        }
+    }
+    SUBCASE("an invalid tint fails at the first glyph") {
+        for (const wui::Color bad : {wui::Color{nan, 0, 0, 1}, wui::Color{0, 0, 0, 1.5f},
+                                     wui::Color{0, -0.25f, 0, 1}, wui::Color{0, 0, inf, 1}}) {
+            check_glyph_run(textures, {{glyph(a, 0, 0, 0), glyph(a, 7)}, offset, bad}, image_a,
+                            shapes_after);
+        }
+    }
+    SUBCASE("an empty clip draws nothing but still validates") {
+        const auto hidden = [&](wui::Canvas& canvas) {
+            image_a(canvas);
+            canvas.push_clip({300, 300, 10, 10});
+        };
+        const auto shown = [&](wui::Canvas& canvas) {
+            canvas.pop_clip();
+            shapes_after(canvas);
+        };
+        check_glyph_run(textures, {{glyph(a, 0), glyph(b, 7)}, offset, tint}, hidden, shown);
+        check_glyph_run(textures,
+                        {{glyph(a, 0), wui::GlyphQuad{a, {0, 0, 1, 1}, {nan, 0, 1, 1}}},
+                         offset, tint},
+                        hidden, shown);
+        check_glyph_run(textures, {{glyph(a, 0)}, offset, {0, 0, 0, 2}}, hidden, shown);
+    }
+    SUBCASE("a failed canvas ignores the run") {
+        const auto failing = [&](wui::Canvas& canvas) {
+            image_a(canvas);
+            canvas.rounded_rect({0, 0, 1, 1}, -1, {1, 1, 1, 1});
+        };
+        check_glyph_run(textures, {{glyph(a, 0)}, offset, tint}, failing, shapes_after);
+        check_glyph_run(textures, {{glyph(a, 0)}, offset, {nan, 0, 0, 1}}, failing, shapes_after);
+    }
+}
+
+TEST_CASE("a batched glyph run outside an active frame does nothing") {
+    auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
+    const auto a = create_pixel(*textures, red);
+    wui::Canvas canvas(textures, 1);
+    const std::array glyphs{wui::GlyphQuad{a, {0, 0, 4, 4}, {0, 0, 1, 1}}};
+    wui::detail::CanvasAccess::glyph_run(canvas, glyphs, {}, {1, 1, 1, 1});
+    CHECK_FALSE(wui::detail::CanvasAccess::status(canvas).has_value());
+    canvas.begin({0, 0, 10, 10}, 1);
+    const auto result = packet(canvas);
+    CHECK(result->vertices.empty());
+}
