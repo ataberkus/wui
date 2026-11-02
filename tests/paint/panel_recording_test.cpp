@@ -3,6 +3,7 @@
 #include <wui/canvas.hpp>
 
 #include "../../src/paint/canvas_access.hpp"
+#include "../../src/paint/shapes_detail.hpp"
 
 #include <array>
 #include <cstddef>
@@ -387,6 +388,68 @@ TEST_CASE("elevated panels finalize shadow, sheet and hairline around their chil
     check_color(drawn_vertex(*packet, packet->batches[next], 0).premultiplied, sibling);
     REQUIRE(packet->semantics.size() == 1);
     check_rect(packet->semantics[0].bounds, bounds);
+}
+
+TEST_CASE("an elevated panel whose shadow cannot be produced finalizes like one without it") {
+    // The elevation shadow is decorative: a capacity limit skips it, and the
+    // sheet, children and hairline follow in the same order, on a healthy canvas.
+    constexpr wui::Color sheet{0.2f, 0.2f, 0.3f, 1};
+    constexpr wui::Color child{1, 1, 0, 1};
+    constexpr wui::Color hairline{0.5f, 0.5f, 0.6f, 1};
+    std::size_t budget = std::size_t{32} << 20;
+    wui::Rect viewport{0, 0, 200, 160};
+    wui::Rect bounds{20, 20, 100, 60};
+    float scale = 1.5f, radius = 8, sigma = 4;
+    std::size_t earlier_shadows = 0; // distinct keys recorded before the panel
+    SUBCASE("no room for the shadow texture in the store") { budget = 4096; }
+    SUBCASE("a physical radius beyond the cache limits") {
+        viewport = {0, 0, 800, 800};
+        bounds = {20, 20, 700, 700};
+        radius = 350; // 2100 physical pixels
+        scale = 6;
+    }
+    SUBCASE("a shadow texture beyond the bounded dimensions") {
+        // Within the radius limit, but 2 * (2000 + 3 * 32) + 1 > 4096 pixels.
+        viewport = {0, 0, 4200, 4200};
+        bounds = {20, 20, 4100, 4100};
+        radius = 2000;
+        sigma = 32;
+        scale = 1;
+    }
+    SUBCASE("a full shadow cache whose entries are all in use") {
+        earlier_shadows = wui::detail::shadow_cache_capacity;
+    }
+    const wui::Rect interior{bounds.x + 8, bounds.y + 8, bounds.w - 16, bounds.h - 16};
+    auto textures = std::make_shared<wui::TextureStore>(budget);
+    const auto record = [&](wui::Canvas& canvas, bool shadow) {
+        canvas.begin(viewport, scale);
+        for (std::size_t i = 0; i < earlier_shadows; ++i) {
+            canvas.shadow({4, 4, 120, 100}, static_cast<float>(i + 1), 1, {0, 0, 0, 0.4f});
+        }
+        const auto mark = CanvasAccess::open_panel(canvas, {7}, {}, {bounds.x, bounds.y, bounds.w, 0},
+                                                   radius, sheet);
+        canvas.push_clip(interior);
+        canvas.rounded_rect({bounds.x + 10, bounds.y + 10, 30, 20}, 0, child);
+        canvas.pop_clip();
+        const wui::detail::PanelElevation elevation{{0, 0, 0, shadow ? 0.8f : 0.0f}, sigma, 4,
+                                                    hairline};
+        CanvasAccess::close_panel(canvas, mark, bounds, interior, elevation);
+        CHECK_FALSE(CanvasAccess::failed(canvas));
+        canvas.rounded_rect({0, 0, 10, 10}, 0, sheet); // sibling paint after the panel
+        return finish(canvas);
+    };
+    wui::Canvas canvas(textures);
+    const auto packet = record(canvas, true);
+    wui::Canvas reference(textures);
+    const auto expected = record(reference, false);
+    REQUIRE(packet->batches.size() == expected->batches.size());
+    for (std::size_t i = 0; i < packet->batches.size(); ++i) {
+        check_draw(*packet, packet->batches[i], *expected, expected->batches[i]);
+        CHECK(packet->textures[packet->batches[i].texture_index]->rgba ==
+              expected->textures[expected->batches[i].texture_index]->rgba);
+    }
+    check_rect(packet->batches.back().clip, viewport); // the sibling, after the hairline
+    check_rect(packet->batches[packet->batches.size() - 2].clip, bounds);
 }
 
 TEST_CASE("panel elevation input is validated at close") {

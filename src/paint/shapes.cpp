@@ -1683,6 +1683,9 @@ struct Canvas::Impl {
         return &shadows.back();
     }
 
+    // Canvas::shadow, and CanvasAccess::decorative_shadow with best_effort.
+    void shadow(Rect bounds, float radius, float sigma, Color color, bool best_effort);
+
     std::shared_ptr<TextureStore> textures;
     std::size_t max_packet_slots = 0;
     std::optional<TextureHandle> white;
@@ -2089,42 +2092,53 @@ void Canvas::image(Rect bounds, TextureHandle texture, Rect uv, Color tint) {
     impl_->image_unchecked(bounds, texture, uv, tint);
 }
 
-void Canvas::shadow(Rect bounds, float radius, float sigma, Color color) {
-    if (!impl_->ready()) {
+// With best_effort, a shadow the library adds on its own: one that cannot be
+// produced for a capacity reason (a physical radius beyond the cache limits,
+// a texture beyond its bounded dimensions or the store's budget, a full cache
+// whose entries are all in use) is skipped before anything is recorded and
+// the frame stays healthy. Invalid input fails the frame and std::bad_alloc
+// propagates either way.
+void Canvas::Impl::shadow(Rect bounds, float radius, float sigma, Color color,
+                          bool best_effort) {
+    if (!ready()) {
         return;
     }
     if (!valid_rect(bounds) || !finite(radius) || radius < 0.0f || !finite(sigma) ||
         !valid_color(color)) {
-        impl_->fail(invalid_argument("Shadow input must be finite and valid"));
+        fail(invalid_argument("Shadow input must be finite and valid"));
         return;
     }
-    const float physical_sigma = sigma * impl_->current->scale;
+    const float physical_sigma = sigma * current->scale;
     if (!finite(physical_sigma) || physical_sigma < 0.5f || physical_sigma > 32.0f) {
-        impl_->fail(invalid_argument("Shadow sigma must be between 0.5 and 32 physical pixels"));
+        fail(invalid_argument("Shadow sigma must be between 0.5 and 32 physical pixels"));
         return;
     }
     if (bounds.w == 0.0f || bounds.h == 0.0f ||
-        impl_->clips.back().w == 0.0f || impl_->clips.back().h == 0.0f) {
+        clips.back().w == 0.0f || clips.back().h == 0.0f) {
         return;
     }
     const float clamped_radius = std::min(radius, 0.5f * std::min(bounds.w, bounds.h));
-    const float physical_radius = clamped_radius * impl_->current->scale;
+    const float physical_radius = clamped_radius * current->scale;
     if (!finite(physical_radius) || physical_radius > 2047.0f) {
-        impl_->fail({ErrorCode::capacity, "Shadow radius exceeds cache limits"});
+        if (!best_effort) {
+            fail({ErrorCode::capacity, "Shadow radius exceeds cache limits"});
+        }
         return;
     }
-    auto cached = impl_->shadow_texture(physical_radius, physical_sigma);
-    if (std::holds_alternative<Error>(cached)) {
-        impl_->fail(std::get<Error>(std::move(cached)));
+    auto cached = shadow_texture(physical_radius, physical_sigma);
+    if (auto* error = std::get_if<Error>(&cached)) {
+        if (!best_effort || error->code != ErrorCode::capacity) {
+            fail(std::move(*error));
+        }
         return;
     }
     const auto* entry = std::get<ShadowEntry*>(cached);
     const float padding = static_cast<float>(entry->border_px - entry->key.radius_px) /
-                          impl_->current->scale;
+                          current->scale;
     const Rect destination{bounds.x - padding, bounds.y - padding,
                            bounds.w + padding * 2.0f, bounds.h + padding * 2.0f};
     const float nominal_border = static_cast<float>(entry->border_px) /
-                                 impl_->current->scale;
+                                 current->scale;
     const float border_x = std::min(nominal_border, destination.w * 0.5f);
     const float border_y = std::min(nominal_border, destination.h * 0.5f);
     const float source_border = static_cast<float>(entry->border_px) /
@@ -2141,10 +2155,14 @@ void Canvas::shadow(Rect bounds, float radius, float sigma, Color color) {
             const Rect piece{dx[x], dy[y], dx[x + 1] - dx[x], dy[y + 1] - dy[y]};
             const Rect uv{su[x], su[y], su[x + 1] - su[x], su[y + 1] - su[y]};
             if (piece.w > 0.0f && piece.h > 0.0f) {
-                impl_->image_unchecked(piece, entry->handle, uv, color);
+                image_unchecked(piece, entry->handle, uv, color);
             }
         }
     }
+}
+
+void Canvas::shadow(Rect bounds, float radius, float sigma, Color color) {
+    impl_->shadow(bounds, radius, sigma, color, false);
 }
 
 void Canvas::semantic(Id id, Role role, std::string_view label, Rect bounds,
@@ -2260,6 +2278,11 @@ void CanvasAccess::abort(Canvas& canvas) noexcept {
     canvas.impl_->reset_frame();
 }
 
+void CanvasAccess::decorative_shadow(Canvas& canvas, Rect bounds, float radius, float sigma,
+                                     Color color) {
+    canvas.impl_->shadow(bounds, radius, sigma, color, true);
+}
+
 PanelMark CanvasAccess::open_panel(Canvas& canvas, Id id, std::string_view title,
                                   Rect provisional, float radius, Color color) {
     auto& impl = *canvas.impl_;
@@ -2294,7 +2317,7 @@ void CanvasAccess::close_panel(Canvas& canvas, PanelMark mark,
         impl.fail(invalid_argument("Panel bounds and interior must be finite and valid"));
         return;
     }
-    // Canvas::shadow checks the physical sigma range.
+    // The shadow checks the physical sigma range.
     if (!valid_color(elevation.shadow) || !valid_color(elevation.hairline) ||
         !finite(elevation.shadow_sigma) || !finite(elevation.shadow_offset)) {
         impl.fail(invalid_argument("Panel elevation must be finite and valid"));
@@ -2314,8 +2337,10 @@ void CanvasAccess::close_panel(Canvas& canvas, PanelMark mark,
     impl.merge_barrier = true;
     try {
         if (elevation.shadow.a > 0.0f) {
-            canvas.shadow({bounds.x, bounds.y + elevation.shadow_offset, bounds.w, bounds.h},
-                          mark.radius, elevation.shadow_sigma, elevation.shadow);
+            // Decorative: a skipped shadow records nothing, and the barrier
+            // above still separates the sheet from the paint before it.
+            impl.shadow({bounds.x, bounds.y + elevation.shadow_offset, bounds.w, bounds.h},
+                        mark.radius, elevation.shadow_sigma, elevation.shadow, true);
         }
         // Only the final outline is tessellated: its clamped radius and topology
         // can differ completely from those of the provisional zero-height box.

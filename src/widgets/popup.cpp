@@ -76,8 +76,12 @@ void paint_popup(FrameState& frame) {
             // sheet. Idle rows paint nothing, so the menu reads as one sheet.
             // The cached shadow blurs a (2r+1)px shape, so at sigma 8 its peak
             // coverage is about 0.7; alpha 0.8 gives a moderate edge shadow.
-            frame.canvas.shadow({bounds.x, bounds.y + 4.0f, bounds.w, bounds.h}, radius,
-                                shadow_sigma(frame, 8.0f), {0.0f, 0.0f, 0.0f, 0.8f});
+            // The shadow is decorative: without room for it the menu still
+            // paints, just flat.
+            CanvasAccess::decorative_shadow(frame.canvas,
+                                            {bounds.x, bounds.y + 4.0f, bounds.w, bounds.h},
+                                            radius, shadow_sigma(frame, 8.0f),
+                                            {0.0f, 0.0f, 0.0f, 0.8f});
             if (!frame.check_canvas()) return;
             WidgetClip clip(frame, bounds);
             if (!frame.check_canvas()) return;
@@ -134,8 +138,9 @@ void paint_popup(FrameState& frame) {
         if (tooltip.kind != OverlayKind::tooltip) continue;
         const auto& theme = tooltip.theme;
         const Rect bounds = tooltip.bounds;
-        frame.canvas.shadow({bounds.x, bounds.y + 2.0f, bounds.w, bounds.h}, theme.control_radius,
-                            shadow_sigma(frame, 4.0f), {0.0f, 0.0f, 0.0f, 0.45f});
+        CanvasAccess::decorative_shadow(frame.canvas, {bounds.x, bounds.y + 2.0f, bounds.w, bounds.h},
+                                        theme.control_radius, shadow_sigma(frame, 4.0f),
+                                        {0.0f, 0.0f, 0.0f, 0.45f});
         if (!frame.check_canvas()) return;
         WidgetClip clip(frame, bounds);
         if (!frame.check_canvas()) return;

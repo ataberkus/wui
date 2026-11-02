@@ -1,4 +1,5 @@
 #include "../../src/core/context_detail.hpp"
+#include "../../src/widgets/painter.hpp"
 #include "../support/widget_fixture.hpp"
 
 #include <doctest/doctest.h>
@@ -424,6 +425,69 @@ TEST_CASE("tooltip delay uses full elapsed time and paints above an open dropdow
     CHECK(tooltip.bounds.w > 0);
     REQUIRE(late->semantics.size() >= 3);
     CHECK(late->semantics.back().role == wui::Role::tooltip);
+}
+
+TEST_CASE("an open dropdown and a tooltip paint flat when the store has no room for their shadows") {
+    // Menu and tooltip shadows are decorative: without room for their
+    // textures, both still paint sheet, content and hairline, and every
+    // frame succeeds.
+    auto desc = wui::test::fixture_desc();
+    desc.textures = std::make_shared<wui::TextureStore>(4096);
+    auto context = wui::test::make_context(std::move(desc));
+    const auto theme = wui::Theme::dark();
+    const std::array<wui::Choice<int>, 2> choices{{{0, "Low"}, {1, "High"}}};
+    int selected = 0;
+    auto draw = [&](wui::FrameInput input) {
+        auto frame = wui::test::begin(*context, input);
+        frame.dropdown("quality", "Quality", selected, choices);
+        frame.tooltip("quality", "Dropdown help");
+        auto packet = wui::test::finish(frame);
+        for (const auto& texture : packet->textures) CHECK(texture->width == 1); // no shadow
+        return packet;
+    };
+    // The last batch is a raised surface: it starts with the sheet and, with
+    // the same texture and clip, ends with the hairline. Returns its clip.
+    const auto check_raised = [&](const wui::DrawPacket& packet) {
+        REQUIRE_FALSE(packet->batches.empty());
+        const auto& batch = packet->batches.back();
+        const auto color = [&](std::uint32_t i) {
+            return packet->vertices[static_cast<std::size_t>(
+                std::int64_t{batch.base_vertex} + packet->indices[batch.first_index + i])].premultiplied;
+        };
+        const auto near = [](wui::Color a, wui::Color b) {
+            return a.r == doctest::Approx(b.r) && a.g == doctest::Approx(b.g) &&
+                   a.b == doctest::Approx(b.b) && a.a == doctest::Approx(b.a);
+        };
+        CHECK(near(color(0), wui::detail::raised_fill(theme)));
+        bool hairline = false;
+        for (std::uint32_t i = 0; i < batch.index_count; ++i)
+            hairline = hairline || near(color(i), wui::detail::track_ink(theme));
+        CHECK(hairline);
+        return batch.clip;
+    };
+    wui::FrameInput input{root};
+    auto initial = draw(input);
+    const auto trigger = wui::test::semantic(initial, wui::Role::dropdown, "Quality").bounds;
+    initial.reset();
+    input.events = {{wui::EventKind::pointer_down, {trigger.x + 8, trigger.y + 8}},
+                    {wui::EventKind::pointer_up, {trigger.x + 8, trigger.y + 8}}};
+    auto opened = draw(input);
+    CHECK(wui::test::semantic(opened, wui::Role::dropdown, "Low").selected);
+    const auto high = wui::test::semantic(opened, wui::Role::dropdown, "High").bounds;
+    // The menu paints last, clipped to the list around its rows.
+    const auto list_clip = check_raised(opened);
+    CHECK(list_clip.y <= high.y);
+    CHECK(list_clip.y + list_clip.h >= high.y + high.h);
+    opened.reset();
+    input.events = {{wui::EventKind::pointer_move, {trigger.x + 8, trigger.y + 8}}};
+    input.dt_seconds = 0.3;
+    draw(input).reset();
+    input.dt_seconds = 0.2;
+    auto late = draw(input);
+    const auto tooltip = wui::test::semantic(late, wui::Role::tooltip, "Dropdown help").bounds;
+    wui::test::semantic(late, wui::Role::dropdown, "High"); // the menu is still open
+    // The tooltip paints above the menu, clipped to its bounds.
+    CHECK(same(check_raised(late), tooltip));
 }
 
 TEST_CASE("inline validation wraps in flow, marks invalid controls, and preserves model IDs across themes") {

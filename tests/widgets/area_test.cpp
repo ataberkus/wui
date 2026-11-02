@@ -319,6 +319,87 @@ TEST_CASE("raised popup sheets enclose nested panels, also when taller than the 
     }
 }
 
+namespace {
+// The popup shadow is decorative: when a capacity limit keeps it from being
+// produced, the popup paints flat (its sheet, then content, then the hairline
+// last) and its frames succeed, so it stays open.
+void check_flat_sheet(const wui::DrawPacket& packet, wui::Rect sheet_clip) {
+    REQUIRE(packet->batches.size() >= 2);
+    const auto theme = wui::Theme::dark();
+    const auto mix = [](wui::Color a, wui::Color b, float t) {
+        return wui::Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1};
+    };
+    const auto& sheet = packet->batches[packet->batches.size() - 2];
+    const auto& hairline = packet->batches.back();
+    check_same(sheet.clip, sheet_clip);
+    check_rgb(vertex(packet, sheet).premultiplied, mix(theme.control, theme.text, 0.05f));
+    check_same(hairline.clip, sheet_clip);
+    check_rgb(vertex(packet, hairline).premultiplied, mix(theme.control, theme.secondary, 0.3f));
+}
+} // namespace
+
+TEST_CASE("generic popups paint flat and stay open when their shadow cannot be produced") {
+    auto desc = wui::test::fixture_desc();
+    auto frame_input = input();
+    wui::PopupOptions options{{0, 0, 100, 30}};
+    float content = 20;
+    wui::Rect sheet{0, 30, 216, 36};
+    SUBCASE("no room for the shadow texture in the store") {
+        desc.textures = std::make_shared<wui::TextureStore>(4096);
+    }
+    SUBCASE("a physical shadow radius beyond the cache limits") {
+        // The radius clamps to half the 2100 x 2116 sheet: 1050 logical and
+        // 2100 physical pixels. Themes bound no radius.
+        desc.theme.control_radius = 4000;
+        frame_input = input({}, {0, 0, 2400, 2400});
+        frame_input.scale = 2;
+        options.width = 2100;
+        content = 2100;
+        sheet = {0, 30, 2100, 2116};
+    }
+    auto context = wui::test::make_context(std::move(desc));
+    for (int i = 0; i < 2; ++i) {
+        auto frame = wui::test::begin(*context, frame_input);
+        if (i == 0) frame.open_popup("menu");
+        bool emitted = false;
+        if (auto popup = frame.popup("menu", options)) {
+            custom(frame, "item", content);
+            emitted = true;
+        }
+        CHECK(emitted);
+        CHECK(frame.popup_open("menu"));
+        const auto packet = wui::test::finish(frame);
+        for (const auto& texture : packet->textures) CHECK(texture->width == 1); // no shadow
+        check_same(wui::test::semantic(packet, wui::Role::panel, "").bounds, sheet);
+        check_flat_sheet(packet, sheet);
+    }
+}
+
+TEST_CASE("a generic popup opened after caller shadows fill the shadow cache paints flat") {
+    // An overlay's shadow waits with its closed layer until the frame ends,
+    // and 31 newer keys fill the 32-entry cache, every entry in use by this
+    // frame. The popup's shadow finds nothing to evict: it is skipped, and
+    // the overlay's shadow keeps its texture.
+    auto context = wui::test::make_context();
+    for (int i = 0; i < 2; ++i) {
+        auto frame = wui::test::begin(*context, input());
+        if (auto overlay = frame.overlay("card", {200, 200, 150, 80}))
+            frame.canvas().shadow({210, 210, 120, 50}, 6, 4, {0, 0, 0, 0.6f});
+        for (int k = 0; k < 31; ++k)
+            frame.canvas().shadow({10, 150, 100, 100}, 1.0f + static_cast<float>(k), 2, {0, 0, 0, 0.5f});
+        if (i == 0) frame.open_popup("menu");
+        if (auto popup = frame.popup("menu", {{0, 0, 100, 30}})) custom(frame, "item", 20);
+        CHECK(frame.popup_open("menu"));
+        const auto packet = wui::test::finish(frame);
+        CHECK(packet->textures.size() == 33); // 32 shadows and the white texture
+        check_flat_sheet(packet, {0, 30, 216, 36});
+        // The overlay layer paints above the main content, below the popup.
+        const auto& card = packet->batches[packet->batches.size() - 3];
+        CHECK(packet->textures[card.texture_index]->width > 1);
+        check_rgb(vertex(packet, card).premultiplied, {0, 0, 0, 0.6f});
+    }
+}
+
 TEST_CASE("tooltip_due follows the shared hover delay") {
     auto context = wui::test::make_context();
     std::vector<bool> due;
