@@ -590,8 +590,8 @@ public:
         return std::nullopt;
     }
 
-    // Copies a freshly tessellated shape into the current generation and
-    // returns the stored copy, or nothing beyond the per-frame bounds.
+    // Copies a freshly tessellated shape into the recording generation and
+    // returns the stored copy, or nothing beyond the per-generation bounds.
     std::optional<Shape> record(const Key& key, std::uint64_t key_hash,
                                 std::span<const Vec2> outline, std::span<const Vec2> fringe) {
         auto& current = generations_[recording_];
@@ -1573,8 +1573,8 @@ struct Canvas::Impl {
     }
 
     // rounded_outline(bounds, radius, scale) and its fringe_outline, from the
-    // outline cache when an identical shape was drawn this or the last frame.
-    // The spans stay valid until the next call.
+    // outline cache when an identical shape was recorded earlier. The spans
+    // stay valid until the next call.
     OutlineCache::Shape rounded_shape(Rect bounds, float radius) {
         const float scale = current->scale;
         const auto key = OutlineCache::key(bounds, radius, scale);
