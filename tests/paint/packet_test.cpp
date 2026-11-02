@@ -185,6 +185,17 @@ TEST_CASE("packet validation rejects invalid scalar and vertex data") {
     SUBCASE("nonfinite clip") {
         packet.batches[0].clip.y = std::numeric_limits<float>::infinity();
     }
+    SUBCASE("nonfinite uv") {
+        packet.vertices[1].uv.y = -std::numeric_limits<float>::infinity();
+    }
+    SUBCASE("nonfinite color") {
+        packet.vertices[2].premultiplied.a = std::numeric_limits<float>::quiet_NaN();
+    }
+    SUBCASE("nonfinite semantic bounds") {
+        packet.semantics.push_back({});
+        packet.semantics.push_back({});
+        packet.semantics[1].bounds.h = std::numeric_limits<float>::infinity();
+    }
     check_invalid(packet);
 }
 
@@ -198,7 +209,45 @@ TEST_CASE("packet validation rejects malformed batch ranges and references") {
     SUBCASE("invalid texture index") { packet.batches[0].texture_index = 1; }
     SUBCASE("negative base vertex") { packet.batches[0].base_vertex = -1; }
     SUBCASE("vertex reference beyond the buffer") { packet.indices[2] = 3; }
+    SUBCASE("index with the sign bit set") { packet.indices[1] = 0x80000000u; }
+    SUBCASE("base vertex sum beyond 32 bits") {
+        // 1 + 0xffffffff wraps to vertex 0 in 32-bit arithmetic.
+        packet.batches[0].base_vertex = 1;
+        packet.indices = {0xffffffffu, 0, 1};
+    }
+    SUBCASE("negative base vertex below the buffer") {
+        packet.batches[0].base_vertex = -2;
+        packet.indices = {2, 3, 1};
+    }
+    SUBCASE("negative base vertex above the buffer") {
+        packet.batches[0].base_vertex = -1;
+        packet.indices = {1, 2, 4};
+    }
+    SUBCASE("bad reference in a long later batch") {
+        packet.indices.resize(3 + 30, 0);
+        packet.indices[3 + 17] = 3;
+        packet.batches.push_back({3, 30, 0, 0, {0, 0, 100, 100}});
+    }
     check_invalid(packet);
+}
+
+TEST_CASE("packet validation accepts every in-range vertex reference") {
+    auto packet = triangle_packet();
+    SUBCASE("negative base vertex") {
+        packet.batches[0].base_vertex = -1;
+        packet.indices = {1, 2, 3};
+    }
+    SUBCASE("large base vertex offset by small indices") {
+        packet.vertices.resize(40);
+        packet.batches[0].base_vertex = 37;
+        packet.indices = {0, 1, 2};
+    }
+    SUBCASE("long batches referencing the last vertex") {
+        packet.indices.assign(33, 2);
+        packet.batches[0].index_count = 33;
+        packet.batches.push_back({0, 0, 0, 0, {0, 0, 0, 0}});
+    }
+    CHECK_FALSE(wui::validate_packet(packet).has_value());
 }
 
 TEST_CASE("packet validation rejects malformed texture snapshots") {

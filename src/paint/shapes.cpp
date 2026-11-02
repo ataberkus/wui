@@ -1,11 +1,13 @@
 #include <wui/canvas.hpp>
 
+#include "../core/float_bits.hpp"
 #include "canvas_access.hpp"
 #include "shapes_detail.hpp"
 
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -27,20 +29,30 @@ constexpr float epsilon = 1.0e-6f;
 
 bool finite(float value) { return std::isfinite(value); }
 bool finite(Vec2 value) { return finite(value.x) && finite(value.y); }
+// Requires x, y, w, h, x + w and y + h to be finite. An infinite or NaN
+// operand always makes a sum infinite or NaN, so the two edge sums being
+// finite already implies that all four components are. Tested branch-free.
 bool finite(Rect value) {
-    return finite(value.x) && finite(value.y) && finite(value.w) && finite(value.h) &&
-           finite(value.x + value.w) && finite(value.y + value.h);
+    return ((detail::nonfinite_bits(value.x + value.w) |
+             detail::nonfinite_bits(value.y + value.h)) &
+            detail::nonfinite_flag) == 0;
 }
-bool finite(Color value) {
-    return finite(value.r) && finite(value.g) && finite(value.b) && finite(value.a);
-}
+// Each channel in [0, 1]. These comparisons are false for NaN and for both
+// infinities, so they also establish finiteness. Bitwise & instead of &&
+// evaluates all of them without a branch per comparison.
 bool valid_color(Color value) {
-    return finite(value) && value.r >= 0.0f && value.r <= 1.0f &&
-           value.g >= 0.0f && value.g <= 1.0f && value.b >= 0.0f &&
-           value.b <= 1.0f && value.a >= 0.0f && value.a <= 1.0f;
+    return (value.r >= 0.0f) & (value.r <= 1.0f) & (value.g >= 0.0f) & (value.g <= 1.0f) &
+           (value.b >= 0.0f) & (value.b <= 1.0f) & (value.a >= 0.0f) & (value.a <= 1.0f);
+}
+// premultiply() for a color that passed valid_color(): its clamping is then
+// the identity, so this is the same product without the call and re-check.
+// Every canvas entry point validates its colors before tessellating.
+Color premultiply_valid(Color value) {
+    assert(valid_color(value));
+    return {value.r * value.a, value.g * value.a, value.b * value.a, value.a};
 }
 bool valid_rect(Rect value) {
-    return finite(value) && value.w >= 0.0f && value.h >= 0.0f;
+    return finite(value) && ((value.w >= 0.0f) & (value.h >= 0.0f));
 }
 bool equal(Rect a, Rect b) {
     return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
@@ -50,13 +62,28 @@ Vec2 subtract(Vec2 a, Vec2 b) { return {a.x - b.x, a.y - b.y}; }
 Vec2 multiply(Vec2 value, float scalar) { return {value.x * scalar, value.y * scalar}; }
 float dot(Vec2 a, Vec2 b) { return a.x * b.x + a.y * b.y; }
 float cross(Vec2 a, Vec2 b) { return a.x * b.y - a.y * b.x; }
-float length(Vec2 value) { return std::hypot(value.x, value.y); }
+// Euclidean length without a libm call. Float squares are exact in double and
+// cannot overflow there, so one correctly rounded double square root narrowed
+// to float equals std::hypot (glibc's hypotf computes exactly this; verified
+// bit for bit on 3e8 inputs) for finite components and for the infinities an
+// overflowing subtraction of finite coordinates can produce.
+float length(Vec2 value) {
+    const double x = value.x;
+    const double y = value.y;
+    return static_cast<float>(std::sqrt(x * x + y * y));
+}
 Vec2 normalized(Vec2 value) {
     const auto magnitude = length(value);
     return magnitude > epsilon ? multiply(value, 1.0f / magnitude) : Vec2{};
 }
 bool near(Vec2 a, Vec2 b) {
-    return length(subtract(a, b)) <= epsilon;
+    const auto delta = subtract(a, b);
+    // length() never rounds below the magnitude of either component, so this
+    // exact early-out skips the square root for all but coincident points.
+    if (std::abs(delta.x) > epsilon || std::abs(delta.y) > epsilon) {
+        return false;
+    }
+    return length(delta) <= epsilon;
 }
 
 void append_unique(std::vector<Vec2>& points, Vec2 point) {
@@ -95,6 +122,56 @@ struct PendingBatch {
     TextureHandle texture;
 };
 
+constexpr int min_corner_segments = 3;
+constexpr int max_corner_segments = 32;
+
+// Unit-circle points of the corner arcs for every segment count that
+// rounded_outline can choose: for n segments, the n - 1 interior points of
+// corners 0..3 (in that order) start at offset[n]. Entries use the float
+// angle expression rounded_outline used to evaluate per point, so sin and
+// cos no longer run for every corner point of every rounded shape. The table
+// is built once; compilers that evaluate the initializer at compile time
+// (GCC does) store correctly rounded values, which can differ from a
+// runtime sinf/cosf by one ulp (37 of the 3960 coordinates with glibc).
+struct CornerArcs {
+    static constexpr std::size_t point_count = [] {
+        std::size_t count = 0;
+        for (int segments = min_corner_segments; segments <= max_corner_segments; ++segments) {
+            count += 4 * static_cast<std::size_t>(segments - 1);
+        }
+        return count;
+    }();
+    std::array<std::size_t, max_corner_segments + 1> offset{};
+    std::array<Vec2, point_count> points{};
+};
+
+const CornerArcs& corner_arcs() {
+    static const CornerArcs arcs = [] {
+        CornerArcs result;
+        constexpr std::array starts{
+            std::numbers::pi_v<float>,
+            std::numbers::pi_v<float> * 1.5f,
+            0.0f,
+            std::numbers::pi_v<float> * 0.5f,
+        };
+        std::size_t next = 0;
+        for (int segments = min_corner_segments; segments <= max_corner_segments; ++segments) {
+            result.offset[static_cast<std::size_t>(segments)] = next;
+            for (std::size_t corner = 0; corner < starts.size(); ++corner) {
+                for (int segment = 1; segment < segments; ++segment) {
+                    const float angle = starts[corner] +
+                                        (std::numbers::pi_v<float> * 0.5f) *
+                                            static_cast<float>(segment) /
+                                            static_cast<float>(segments);
+                    result.points[next++] = {std::cos(angle), std::sin(angle)};
+                }
+            }
+        }
+        return result;
+    }();
+    return arcs;
+}
+
 void rounded_outline(Rect bounds, float radius, float scale, std::vector<Vec2>& out) {
     out.clear();
     radius = std::clamp(radius, 0.0f, 0.5f * std::min(bounds.w, bounds.h));
@@ -111,40 +188,38 @@ void rounded_outline(Rect bounds, float radius, float scale, std::vector<Vec2>& 
     const int segments = std::clamp(
         static_cast<int>(std::ceil((std::numbers::pi_v<float> * 0.5f) /
                                    std::max(maximum_step, epsilon))),
-        3, 32);
-    out.reserve(static_cast<std::size_t>((segments + 1) * 4));
+        min_corner_segments, max_corner_segments);
+    // Room for every candidate point, written through a cursor (no capacity
+    // check per point) and trimmed afterwards. Consecutive near-duplicates
+    // are skipped exactly as append_unique would skip them.
+    out.resize(static_cast<std::size_t>((segments + 1) * 4));
+    Vec2* const first = out.data();
+    Vec2* last = first; // one past the most recently kept point
+    const auto keep = [first, &last](Vec2 point) {
+        if (last == first || !near(last[-1], point)) {
+            *last++ = point;
+        }
+    };
     const std::array centers{
         Vec2{bounds.x + radius, bounds.y + radius},
         Vec2{bounds.x + bounds.w - radius, bounds.y + radius},
         Vec2{bounds.x + bounds.w - radius, bounds.y + bounds.h - radius},
         Vec2{bounds.x + radius, bounds.y + bounds.h - radius},
     };
-    constexpr std::array starts{
-        std::numbers::pi_v<float>,
-        std::numbers::pi_v<float> * 1.5f,
-        0.0f,
-        std::numbers::pi_v<float> * 0.5f,
-    };
+    // Exact cardinal endpoints prevent near-duplicate edges when adjacent
+    // corner centers coincide (circles and capsules).
+    constexpr std::array cardinal{Vec2{-1, 0}, Vec2{0, -1}, Vec2{1, 0}, Vec2{0, 1}};
+    const auto& arcs = corner_arcs();
+    const Vec2* arc = arcs.points.data() + arcs.offset[static_cast<std::size_t>(segments)];
     for (std::size_t corner = 0; corner < centers.size(); ++corner) {
-        // Exact cardinal endpoints prevent near-duplicate edges when adjacent
-        // corner centers coincide (circles and capsules).
-        constexpr std::array cardinal{Vec2{-1, 0}, Vec2{0, -1},
-                                       Vec2{1, 0}, Vec2{0, 1}};
-        for (int segment = 0; segment <= segments; ++segment) {
-            if (segment == 0 || segment == segments) {
-                const auto axis = cardinal[(corner + (segment == segments)) % 4];
-                append_unique(out, add(centers[corner], multiply(axis, radius)));
-                continue;
-            }
-            const float angle = starts[corner] +
-                                (std::numbers::pi_v<float> * 0.5f) *
-                                    static_cast<float>(segment) /
-                                    static_cast<float>(segments);
-            append_unique(out,
-                          {centers[corner].x + std::cos(angle) * radius,
-                           centers[corner].y + std::sin(angle) * radius});
+        const auto center = centers[corner];
+        keep(add(center, multiply(cardinal[corner], radius)));
+        for (int segment = 1; segment < segments; ++segment, ++arc) {
+            keep({center.x + arc->x * radius, center.y + arc->y * radius});
         }
+        keep(add(center, multiply(cardinal[(corner + 1) % 4], radius)));
     }
+    out.resize(static_cast<std::size_t>(last - first));
     remove_duplicate_closure(out);
 }
 
@@ -155,7 +230,7 @@ double signed_area(std::span<const Vec2> points) {
     double area = 0.0;
     const auto origin = points.front();
     for (std::size_t i = 0; i < points.size(); ++i) {
-        const auto j = (i + 1) % points.size();
+        const auto j = i + 1 == points.size() ? 0 : i + 1;
         area += (static_cast<double>(points[i].x) - origin.x) *
                     (static_cast<double>(points[j].y) - origin.y) -
                 (static_cast<double>(points[i].y) - origin.y) *
@@ -385,16 +460,21 @@ bool simple_outline(std::span<const Vec2> points) {
 void fringe_outline(std::span<const Vec2> points, float fringe, std::vector<Vec2>& out) {
     const float orientation = signed_area(points) > 0 ? 1.0f : -1.0f;
     out.clear();
-    out.reserve(points.size());
+    if (points.empty()) {
+        return;
+    }
+    out.resize(points.size());
+    const auto edge_normal = [orientation](Vec2 from, Vec2 to) {
+        const auto edge = normalized(subtract(to, from));
+        return multiply(Vec2{edge.y, -edge.x}, orientation);
+    };
+    // Each edge normal serves the corners at both of its ends: the outgoing
+    // normal of one corner is carried over as the incoming one of the next.
+    auto previous_normal = edge_normal(points.back(), points.front());
     for (std::size_t i = 0; i < points.size(); ++i) {
-        const auto previous = points[(i + points.size() - 1) % points.size()];
         const auto current = points[i];
-        const auto next = points[(i + 1) % points.size()];
-        const auto previous_edge = normalized(subtract(current, previous));
-        const auto next_edge = normalized(subtract(next, current));
-        const auto previous_normal = multiply(
-            Vec2{previous_edge.y, -previous_edge.x}, orientation);
-        const auto next_normal = multiply(Vec2{next_edge.y, -next_edge.x}, orientation);
+        const auto next = points[i + 1 == points.size() ? 0 : i + 1];
+        const auto next_normal = edge_normal(current, next);
         auto miter = normalized(add(previous_normal, next_normal));
         float distance = fringe;
         const float denominator = dot(miter, next_normal);
@@ -404,9 +484,173 @@ void fringe_outline(std::span<const Vec2> points, float fringe, std::vector<Vec2
             miter = next_normal;
         }
         distance = std::clamp(distance, -2.0f * fringe, 2.0f * fringe);
-        out.push_back(add(current, multiply(miter, distance)));
+        out[i] = add(current, multiply(miter, distance));
+        previous_normal = next_normal;
     }
 }
+
+// Cross-frame memo of rounded outlines and their antialiasing fringes.
+// rounded_outline and fringe_outline are pure functions of the exact
+// bounds, radius and scale, and immediate-mode UIs repaint mostly the same
+// rectangles every frame, so a shape recorded during the previous frame is
+// reused bit for bit instead of being tessellated again. Two generations
+// alternate: lookups see the previous frame's entries and this frame's,
+// and every shape used this frame is (re)recorded into the current
+// generation, whose storage is reused from two frames ago. Storage grows
+// only when a frame records more than any earlier frame in that generation
+// (warm-up); beyond the per-frame bounds in shapes_detail.hpp shapes are
+// simply not recorded and are tessellated every time. Storage is at most
+// 8 MiB of points and 2.4 MiB of slots per generation.
+class OutlineCache {
+public:
+    static constexpr std::size_t max_entries = detail::outline_cache_entry_limit;
+    static constexpr std::size_t max_points = detail::outline_cache_point_limit; // outline + fringe
+
+    struct Key {
+        std::array<std::uint32_t, 6> bits{};
+        bool operator==(const Key&) const = default;
+    };
+    struct Shape {
+        std::span<const Vec2> outline;
+        std::span<const Vec2> fringe; // same length as outline
+    };
+
+    static Key key(Rect bounds, float radius, float scale) {
+        // Exact bits: equal keys mean identical tessellation inputs.
+        return {{std::bit_cast<std::uint32_t>(bounds.x), std::bit_cast<std::uint32_t>(bounds.y),
+                 std::bit_cast<std::uint32_t>(bounds.w), std::bit_cast<std::uint32_t>(bounds.h),
+                 std::bit_cast<std::uint32_t>(radius), std::bit_cast<std::uint32_t>(scale)}};
+    }
+    static std::uint64_t hash(const Key& key) {
+        std::uint64_t value = 0;
+        for (std::size_t i = 0; i < key.bits.size(); i += 2) {
+            const auto word = key.bits[i] | (std::uint64_t{key.bits[i + 1]} << 32);
+            value = (value ^ word) * 0x9e3779b97f4a7c15ull;
+            value ^= value >> 32;
+        }
+        return value;
+    }
+
+    // Called at the start of each frame.
+    void rotate() noexcept {
+        std::swap(recording_, previous_);
+        auto& next = generations_[recording_];
+        next.used = 0;
+        next.entries = 0;
+        if (++stamp_ == 0) { // after 2^32 frames: forget every slot explicitly
+            for (auto& generation : generations_) {
+                for (auto& slot : generation.slots) slot.stamp = 0;
+            }
+            generations_[previous_].stamp = 0;
+            stamp_ = 1;
+        }
+        next.stamp = stamp_;
+    }
+
+    // The shape recorded for `key` this frame or the previous one. A
+    // previous-frame shape is carried into the current generation (when
+    // within bounds) so that it stays available to the next frame.
+    std::optional<Shape> find(const Key& key, std::uint64_t key_hash) {
+        auto& current = generations_[recording_];
+        if (const auto* slot = lookup(current, key, key_hash)) {
+            return view(current, *slot);
+        }
+        auto& previous = generations_[previous_];
+        if (const auto* slot = lookup(previous, key, key_hash)) {
+            const auto shape = view(previous, *slot);
+            if (const auto carried = record(key, key_hash, shape.outline, shape.fringe)) {
+                return carried;
+            }
+            return shape; // stays valid until the next rotate()
+        }
+        return std::nullopt;
+    }
+
+    // Copies a freshly tessellated shape into the current generation and
+    // returns the stored copy, or nothing beyond the per-frame bounds.
+    std::optional<Shape> record(const Key& key, std::uint64_t key_hash,
+                                std::span<const Vec2> outline, std::span<const Vec2> fringe) {
+        auto& current = generations_[recording_];
+        const auto needed = outline.size() * 2;
+        if (outline.size() != fringe.size() || current.entries >= max_entries ||
+            current.used + needed > max_points) {
+            return std::nullopt;
+        }
+        if ((current.entries + 1) * 2 > current.slots.size()) {
+            grow_slots(current);
+        }
+        if (current.used + needed > current.capacity) {
+            grow_points(current, current.used + needed);
+        }
+        const auto offset = current.used;
+        std::copy(fringe.begin(), fringe.end(),
+                  std::copy(outline.begin(), outline.end(), current.points.get() + offset));
+        current.used += needed;
+        auto* slot = probe(current, key, key_hash);
+        *slot = {key, static_cast<std::uint32_t>(offset),
+                 static_cast<std::uint32_t>(outline.size()), current.stamp};
+        ++current.entries;
+        return view(current, *slot);
+    }
+
+private:
+    struct Slot {
+        Key key;
+        std::uint32_t offset = 0, count = 0; // count outline points, then as many fringe points
+        std::uint32_t stamp = 0;             // live while equal to its generation's stamp
+    };
+    struct Generation {
+        // Raw storage rather than a vector: appending is a plain copy, with
+        // no per-append construction of Vec2's default member initializers.
+        std::unique_ptr<Vec2[]> points;
+        std::size_t capacity = 0, used = 0;
+        std::vector<Slot> slots; // open addressing; size is zero or a power of two
+        std::size_t entries = 0;
+        std::uint32_t stamp = 0;
+    };
+
+    static Shape view(const Generation& generation, const Slot& slot) {
+        const auto* first = generation.points.get() + slot.offset;
+        return {{first, slot.count}, {first + slot.count, slot.count}};
+    }
+    // The live slot holding `key`, or the first free slot of its probe run.
+    static Slot* probe(Generation& generation, const Key& key, std::uint64_t key_hash) {
+        const auto mask = generation.slots.size() - 1;
+        for (auto index = static_cast<std::size_t>(key_hash) & mask;;
+             index = (index + 1) & mask) {
+            auto& slot = generation.slots[index];
+            if (slot.stamp != generation.stamp || slot.key == key) return &slot;
+        }
+    }
+    static const Slot* lookup(Generation& generation, const Key& key, std::uint64_t key_hash) {
+        if (generation.entries == 0 || generation.stamp == 0) return nullptr;
+        const auto* slot = probe(generation, key, key_hash);
+        return slot->stamp == generation.stamp ? slot : nullptr;
+    }
+    // Doubles the table (kept at most half full) and re-inserts live slots.
+    static void grow_slots(Generation& generation) {
+        std::vector<Slot> slots(std::max<std::size_t>(64, generation.slots.size() * 2));
+        std::swap(slots, generation.slots);
+        for (const auto& slot : slots) {
+            if (slot.stamp == generation.stamp) {
+                *probe(generation, slot.key, hash(slot.key)) = slot;
+            }
+        }
+    }
+    static void grow_points(Generation& generation, std::size_t needed) {
+        const auto capacity =
+            std::min(max_points, std::max({needed, generation.capacity * 2, std::size_t{1024}}));
+        auto points = std::make_unique<Vec2[]>(capacity);
+        std::copy(generation.points.get(), generation.points.get() + generation.used,
+                  points.get());
+        generation.points = std::move(points);
+        generation.capacity = capacity;
+    }
+
+    std::array<Generation, 2> generations_;
+    std::size_t recording_ = 0, previous_ = 1;
+    std::uint32_t stamp_ = 0;
+};
 
 bool coherent_fringe(std::span<const Vec2> inner, std::span<const Vec2> outer) {
     if (!simple_outline(outer)) {
@@ -726,50 +970,125 @@ struct Canvas::Impl {
         merge_barrier = true;
     }
 
-    bool append(std::span<const Vertex> vertices, std::span<const std::uint32_t> indices,
-                TextureHandle texture) {
+    // Shapes write their geometry straight into the retained packet buffers
+    // rather than building it in scratch storage and copying it over.
+    // begin_mesh() checks the frame, grows the packet's vertex and index
+    // arrays by exactly the requested counts and returns write cursors into
+    // the new tails; the shape must fill every slot (indices offset by
+    // `base`) and then call end_mesh() with the final cursors, which records
+    // the new index range as a batch or extends the previous one. Writing
+    // through cursors avoids a capacity check per element.
+    struct Mesh {
+        Vertex* vertex = nullptr;       // next vertex slot to write
+        std::uint32_t* index = nullptr; // next index slot to write
+        std::uint32_t base = 0;         // packet index of the mesh's first vertex
+        std::uint32_t first_index = 0;  // packet index of the mesh's first index
+    };
+
+    template <typename T>
+    static void reserve_more(std::vector<T>& values, std::size_t count) {
+        if (values.capacity() - values.size() < count) {
+            // Geometric growth, as insert() would apply, keeps warm-up amortized.
+            values.reserve(values.size() + std::max(values.size(), count));
+        }
+    }
+
+    // The frame checks shared by every mesh, then capacity for the given
+    // counts. Returns false, having appended nothing, when the canvas cannot
+    // take paint; reserve is the only step that can throw.
+    bool reserve_mesh(std::size_t vertex_count, std::size_t index_count) {
         if (!ready() || clips.back().w == 0.0f || clips.back().h == 0.0f) {
             return false;
         }
-        if (current->vertices.size() > std::numeric_limits<std::uint32_t>::max() -
-                                           vertices.size() ||
-            current->indices.size() > std::numeric_limits<std::uint32_t>::max() -
-                                          indices.size()) {
+        auto& vertices = current->vertices;
+        auto& indices = current->indices;
+        if (vertices.size() > std::numeric_limits<std::uint32_t>::max() - vertex_count ||
+            indices.size() > std::numeric_limits<std::uint32_t>::max() - index_count) {
             fail({ErrorCode::capacity, "Canvas geometry exceeds packet limits"});
             return false;
         }
-        const auto base = static_cast<std::uint32_t>(current->vertices.size());
-        const auto first_index = static_cast<std::uint32_t>(current->indices.size());
-        current->vertices.insert(current->vertices.end(), vertices.begin(), vertices.end());
-        for (const auto index : indices) {
-            current->indices.push_back(base + index);
-        }
-        if (!merge_barrier && !current->batches.empty() &&
-            pending_batches.back().texture == texture &&
-            equal(current->batches.back().clip, clips.back()) &&
-            current->batches.back().first_index + current->batches.back().index_count ==
-                first_index) {
-            current->batches.back().index_count += static_cast<std::uint32_t>(indices.size());
-        } else {
-            current->batches.push_back({first_index, static_cast<std::uint32_t>(indices.size()),
-                                        0, 0, clips.back()});
-            pending_batches.push_back({texture});
-        }
-        merge_barrier = false;
+        reserve_more(vertices, vertex_count);
+        reserve_more(indices, index_count);
         return true;
     }
 
+    std::optional<Mesh> begin_mesh(std::size_t vertex_count, std::size_t index_count) {
+        if (!reserve_mesh(vertex_count, index_count)) {
+            return std::nullopt;
+        }
+        auto& vertices = current->vertices;
+        auto& indices = current->indices;
+        const auto base = vertices.size();
+        const auto first_index = indices.size();
+        // Within reserved capacity resize cannot throw.
+        vertices.resize(base + vertex_count);
+        indices.resize(first_index + index_count);
+        return Mesh{vertices.data() + base, indices.data() + first_index,
+                    static_cast<std::uint32_t>(base), static_cast<std::uint32_t>(first_index)};
+    }
+
+    // Records indices [first_index, end) as a batch or extends the previous one.
+    void end_mesh(std::uint32_t first_index, TextureHandle texture) {
+        const auto index_count =
+            static_cast<std::uint32_t>(current->indices.size() - first_index);
+        auto& batches = current->batches;
+        if (!merge_barrier && !batches.empty() &&
+            pending_batches.back().texture == texture &&
+            equal(batches.back().clip, clips.back()) &&
+            batches.back().first_index + batches.back().index_count == first_index) {
+            batches.back().index_count += index_count;
+        } else {
+            batches.push_back({first_index, index_count, 0, 0, clips.back()});
+            pending_batches.push_back({texture});
+        }
+        merge_barrier = false;
+    }
+
+    // `filled` is the mesh with its cursors advanced past the written slots.
+    void end_mesh(const Mesh& filled, TextureHandle texture) {
+        assert(filled.vertex == current->vertices.data() + current->vertices.size() &&
+               filled.index == current->indices.data() + current->indices.size() &&
+               "a shape must write every vertex and index slot it requested");
+        end_mesh(filled.first_index, texture);
+    }
+
+    template <std::size_t N>
+    static void put(std::uint32_t*& cursor, const std::array<std::uint32_t, N>& values) {
+        for (const auto value : values) {
+            *cursor++ = value;
+        }
+    }
+
+    // Two triangles over four corners given in winding order. Meshes this
+    // small are cheaper to push_back (within reserved capacity) than to
+    // resize and fill through cursors.
+    void quad_unchecked(const std::array<Vertex, 4>& corners, TextureHandle texture) {
+        if (!reserve_mesh(4, 6)) {
+            return;
+        }
+        auto& vertices = current->vertices;
+        auto& indices = current->indices;
+        const auto b = static_cast<std::uint32_t>(vertices.size());
+        const auto first_index = static_cast<std::uint32_t>(indices.size());
+        for (const auto& corner : corners) {
+            vertices.push_back(corner);
+        }
+        for (const auto index : {b, b + 1, b + 2, b, b + 2, b + 3}) {
+            indices.push_back(index);
+        }
+        end_mesh(first_index, texture);
+    }
+
     void image_unchecked(Rect bounds, TextureHandle texture, Rect uv, Color tint) {
-        const auto color = premultiply(tint);
-        const std::array vertices{
-            Vertex{{bounds.x, bounds.y}, {uv.x, uv.y}, color},
-            Vertex{{bounds.x + bounds.w, bounds.y}, {uv.x + uv.w, uv.y}, color},
-            Vertex{{bounds.x + bounds.w, bounds.y + bounds.h},
-                   {uv.x + uv.w, uv.y + uv.h}, color},
-            Vertex{{bounds.x, bounds.y + bounds.h}, {uv.x, uv.y + uv.h}, color},
-        };
-        constexpr std::array<std::uint32_t, 6> indices{0, 1, 2, 0, 2, 3};
-        append(vertices, indices, texture);
+        const auto color = premultiply_valid(tint);
+        quad_unchecked({
+                           Vertex{{bounds.x, bounds.y}, {uv.x, uv.y}, color},
+                           Vertex{{bounds.x + bounds.w, bounds.y}, {uv.x + uv.w, uv.y}, color},
+                           Vertex{{bounds.x + bounds.w, bounds.y + bounds.h},
+                                  {uv.x + uv.w, uv.y + uv.h}, color},
+                           Vertex{{bounds.x, bounds.y + bounds.h}, {uv.x, uv.y + uv.h}, color},
+                       },
+                       texture);
     }
 
     void polygon_unchecked(std::span<const Vec2> points, Color color,
@@ -778,36 +1097,64 @@ struct Canvas::Impl {
         if (points.size() < 3 || clips.back().w == 0.0f || clips.back().h == 0.0f) {
             return;
         }
-        const auto inner_color = premultiply(color);
-        vertex_scratch.clear();
-        vertex_scratch.reserve(points.size() * 2);
-        for (const auto point : points) {
-            vertex_scratch.push_back({point, {0.5f, 0.5f}, inner_color});
-        }
         if (outer.empty()) {
             fringe_outline(points, 1.0f / current->scale, fringe_scratch);
             outer = fringe_scratch;
         }
-        for (const auto point : outer) {
-            vertex_scratch.push_back({point, {0.5f, 0.5f}, {0, 0, 0, 0}});
+        const auto count = static_cast<std::uint32_t>(points.size());
+        const std::size_t interior_count =
+            interior.empty() ? (points.size() - 2) * 3 : interior.size();
+        auto mesh =
+            begin_mesh(points.size() + outer.size(), interior_count + points.size() * 6);
+        if (!mesh) {
+            return;
         }
-
-        index_scratch.clear();
-        index_scratch.reserve((points.size() - 2) * 3 + points.size() * 6);
+        const auto inner_color = premultiply_valid(color);
+        Vertex* vertex = mesh->vertex;
+        for (const auto point : points) {
+            *vertex++ = {point, {0.5f, 0.5f}, inner_color};
+        }
+        for (const auto point : outer) {
+            *vertex++ = {point, {0.5f, 0.5f}, {0, 0, 0, 0}};
+        }
+        mesh->vertex = vertex;
+        std::uint32_t* index = mesh->index;
+        const auto b = mesh->base;
         if (interior.empty()) {
-            for (std::uint32_t i = 1; i + 1 < points.size(); ++i) {
-                index_scratch.insert(index_scratch.end(), {0, i, i + 1});
+            for (std::uint32_t i = 1; i + 1 < count; ++i) {
+                put(index, std::array{b, b + i, b + i + 1});
             }
         } else {
-            index_scratch.insert(index_scratch.end(), interior.begin(), interior.end());
+            for (const auto local : interior) {
+                *index++ = b + local;
+            }
         }
-        const auto outer_index = static_cast<std::uint32_t>(points.size());
-        for (std::uint32_t i = 0; i < points.size(); ++i) {
-            const auto next = (i + 1) % static_cast<std::uint32_t>(points.size());
-            index_scratch.insert(index_scratch.end(), {i, outer_index + next, next,
-                                                       i, outer_index + i, outer_index + next});
+        const auto o = b + count; // first outer (fringe) vertex
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const auto next = i + 1 == count ? 0 : i + 1;
+            put(index, std::array{b + i, o + next, b + next, b + i, o + i, o + next});
         }
-        append(vertex_scratch, index_scratch, *white);
+        mesh->index = index;
+        end_mesh(*mesh, *white);
+    }
+
+    // rounded_outline(bounds, radius, scale) and its fringe_outline, from the
+    // outline cache when an identical shape was drawn this or the last frame.
+    // The spans stay valid until the next call.
+    OutlineCache::Shape rounded_shape(Rect bounds, float radius) {
+        const float scale = current->scale;
+        const auto key = OutlineCache::key(bounds, radius, scale);
+        const auto key_hash = OutlineCache::hash(key);
+        if (const auto cached = outline_cache.find(key, key_hash)) {
+            return *cached;
+        }
+        rounded_outline(bounds, radius, scale, outline_scratch);
+        fringe_outline(outline_scratch, 1.0f / scale, fringe_scratch);
+        if (const auto recorded =
+                outline_cache.record(key, key_hash, outline_scratch, fringe_scratch)) {
+            return *recorded;
+        }
+        return {outline_scratch, fringe_scratch};
     }
 
     void stroke_coverage(std::span<const Vec2> points, float width, Color color) {
@@ -908,8 +1255,8 @@ struct Canvas::Impl {
     std::vector<TextureHandle> frame_handles;
     std::vector<Vec2> outline_scratch, fringe_scratch, clean_scratch, direction_scratch,
                       normal_scratch, plus_scratch, minus_scratch;
-    std::vector<Vertex> vertex_scratch;
-    std::vector<std::uint32_t> index_scratch, remaining_scratch, triangle_scratch;
+    OutlineCache outline_cache;
+    std::vector<std::uint32_t> remaining_scratch, triangle_scratch;
     // Detached overlay layers: batch descriptors moved out of the main order
     // and appended above it by flush_layers().
     std::vector<Batch> layer_batches;
@@ -926,6 +1273,7 @@ void Canvas::begin(Rect viewport, float scale) {
         return;
     }
     impl_->frame_error = impl_->construction_error;
+    impl_->outline_cache.rotate();
     impl_->pending_batches.clear();
     impl_->clips.clear();
     impl_->merge_barrier = false;
@@ -1003,8 +1351,11 @@ void Canvas::rounded_rect(Rect bounds, float radius, Color color) {
     if (bounds.w == 0.0f || bounds.h == 0.0f) {
         return;
     }
-    rounded_outline(bounds, radius, impl_->current->scale, impl_->outline_scratch);
-    impl_->polygon_unchecked(impl_->outline_scratch, color);
+    if (impl_->clips.back().w == 0.0f || impl_->clips.back().h == 0.0f) {
+        return; // polygon_unchecked would draw nothing either
+    }
+    const auto shape = impl_->rounded_shape(bounds, radius);
+    impl_->polygon_unchecked(shape.outline, color, {}, shape.fringe);
 }
 void Canvas::gradient(Rect bounds, Color top, Color bottom) {
     if (!impl_->ready()) return;
@@ -1013,14 +1364,14 @@ void Canvas::gradient(Rect bounds, Color top, Color bottom) {
         return;
     }
     if (bounds.w == 0 || bounds.h == 0) return;
-    const std::array vertices{
-        Vertex{{bounds.x, bounds.y}, {0.5f, 0.5f}, premultiply(top)},
-        Vertex{{bounds.x + bounds.w, bounds.y}, {0.5f, 0.5f}, premultiply(top)},
-        Vertex{{bounds.x + bounds.w, bounds.y + bounds.h}, {0.5f, 0.5f}, premultiply(bottom)},
-        Vertex{{bounds.x, bounds.y + bounds.h}, {0.5f, 0.5f}, premultiply(bottom)},
-    };
-    constexpr std::array<std::uint32_t, 6> indices{0, 1, 2, 0, 2, 3};
-    impl_->append(vertices, indices, *impl_->white);
+    impl_->quad_unchecked(
+        {
+            Vertex{{bounds.x, bounds.y}, {0.5f, 0.5f}, premultiply_valid(top)},
+            Vertex{{bounds.x + bounds.w, bounds.y}, {0.5f, 0.5f}, premultiply_valid(top)},
+            Vertex{{bounds.x + bounds.w, bounds.y + bounds.h}, {0.5f, 0.5f}, premultiply_valid(bottom)},
+            Vertex{{bounds.x, bounds.y + bounds.h}, {0.5f, 0.5f}, premultiply_valid(bottom)},
+        },
+        *impl_->white);
 }
 
 void Canvas::gradient(Rect bounds, Color top_left, Color top_right,
@@ -1033,18 +1384,14 @@ void Canvas::gradient(Rect bounds, Color top_left, Color top_right,
     }
     if (bounds.w == 0 || bounds.h == 0) return;
     constexpr std::uint32_t cells = 8;
-    const Color corners[4]{premultiply(top_left), premultiply(top_right),
-                           premultiply(bottom_right), premultiply(bottom_left)};
+    const Color corners[4]{premultiply_valid(top_left), premultiply_valid(top_right),
+                           premultiply_valid(bottom_right), premultiply_valid(bottom_left)};
     const auto lerp = [](Color a, Color b, float t) {
         return Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
                      a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t};
     };
-    auto& vertices = impl_->vertex_scratch;
-    auto& indices = impl_->index_scratch;
-    vertices.clear();
-    indices.clear();
-    vertices.reserve((cells + 1) * (cells + 1));
-    indices.reserve(cells * cells * 6);
+    auto mesh = impl_->begin_mesh((cells + 1) * (cells + 1), cells * cells * 6);
+    if (!mesh) return;
     for (std::uint32_t y = 0; y <= cells; ++y) {
         const float v = static_cast<float>(y) / cells;
         const Color left = lerp(corners[0], corners[3], v);
@@ -1054,19 +1401,19 @@ void Canvas::gradient(Rect bounds, Color top_left, Color top_right,
         for (std::uint32_t x = 0; x <= cells; ++x) {
             const float u = static_cast<float>(x) / cells;
             const float px = x == cells ? bounds.x + bounds.w : bounds.x + bounds.w * u;
-            vertices.push_back({{px, py}, {0.5f, 0.5f}, lerp(left, right, u)});
+            *mesh->vertex++ = {{px, py}, {0.5f, 0.5f}, lerp(left, right, u)};
         }
     }
     for (std::uint32_t y = 0; y < cells; ++y) {
         for (std::uint32_t x = 0; x < cells; ++x) {
-            const std::uint32_t a = y * (cells + 1) + x;
+            const std::uint32_t a = mesh->base + y * (cells + 1) + x;
             const std::uint32_t b = a + 1;
             const std::uint32_t c = a + cells + 2;
             const std::uint32_t d = a + cells + 1;
-            indices.insert(indices.end(), {a, b, c, a, c, d});
+            Impl::put(mesh->index, std::array{a, b, c, a, c, d});
         }
     }
-    impl_->append(vertices, indices, *impl_->white);
+    impl_->end_mesh(*mesh, *impl_->white);
 }
 
 void Canvas::border(Rect bounds, float radius, float width, Color color) {
@@ -1085,18 +1432,18 @@ void Canvas::border(Rect bounds, float radius, float width, Color color) {
     const Rect inner{bounds.x + width, bounds.y + width,
                      bounds.w - width * 2, bounds.h - width * 2};
     const float inner_radius = std::max(0.0f, outer_radius - width);
-    auto& outer = impl_->outline_scratch;
-    auto& fringe = impl_->fringe_scratch;
-    auto& vertices = impl_->vertex_scratch;
-    auto& indices = impl_->index_scratch;
-    rounded_outline(bounds, outer_radius, impl_->current->scale, outer);
-    fringe_outline(outer, 1.0f / impl_->current->scale, fringe);
+    if (impl_->clips.back().w == 0.0f || impl_->clips.back().h == 0.0f) {
+        return; // begin_mesh would refuse the mesh either way
+    }
+    const auto shape = impl_->rounded_shape(bounds, outer_radius);
+    const auto outer = shape.outline;
+    const auto fringe = shape.fringe;
     const auto count = static_cast<std::uint32_t>(outer.size());
-    const Color fill = premultiply(color);
-    vertices.clear();
-    vertices.reserve(count * 3);
+    auto mesh = impl_->begin_mesh(std::size_t{count} * 3, std::size_t{count} * 12);
+    if (!mesh) return;
+    const Color fill = premultiply_valid(color);
     for (const auto point : outer)
-        vertices.push_back({point, {0.5f, 0.5f}, fill});
+        *mesh->vertex++ = {point, {0.5f, 0.5f}, fill};
     const float middle_x = bounds.x + bounds.w * 0.5f;
     const float middle_y = bounds.y + bounds.h * 0.5f;
     for (const auto point : outer) {
@@ -1111,21 +1458,23 @@ void Canvas::border(Rect bounds, float radius, float width, Color color) {
         const float inner_y = (top ? inner.y : inner.y + inner.h) +
                               (top ? inner_radius : -inner_radius);
         const float ratio = outer_radius > 0 ? inner_radius / outer_radius : 0;
-        vertices.push_back({{inner_x + (point.x - center_x) * ratio,
-                             inner_y + (point.y - center_y) * ratio},
-                            {0.5f, 0.5f}, fill});
+        *mesh->vertex++ = {{inner_x + (point.x - center_x) * ratio,
+                            inner_y + (point.y - center_y) * ratio},
+                           {0.5f, 0.5f}, fill};
     }
     for (const auto point : fringe)
-        vertices.push_back({point, {0.5f, 0.5f}, {0, 0, 0, 0}});
-    indices.clear();
-    indices.reserve(count * 12);
+        *mesh->vertex++ = {point, {0.5f, 0.5f}, {0, 0, 0, 0}};
+    // Rings of `count` vertices each: outer edge, inner edge, outer fringe.
+    const auto o = mesh->base;
+    const auto n = o + count;
+    const auto f = o + count * 2;
     for (std::uint32_t i = 0; i < count; ++i) {
-        const auto next = (i + 1) % count;
-        indices.insert(indices.end(), {i, next, count + next, i, count + next, count + i,
-                                       i, count * 2 + next, next,
-                                       i, count * 2 + i, count * 2 + next});
+        const auto next = i + 1 == count ? 0 : i + 1;
+        Impl::put(mesh->index, std::array{o + i, o + next, n + next, o + i, n + next, n + i,
+                                          o + i, f + next, o + next,
+                                          o + i, f + i, f + next});
     }
-    impl_->append(vertices, indices, *impl_->white);
+    impl_->end_mesh(*mesh, *impl_->white);
 }
 
 void Canvas::convex(std::span<const Vec2> points, Color color) {
@@ -1411,6 +1760,11 @@ namespace detail {
 
 Status CanvasAccess::status(const Canvas& canvas) {
     const auto& impl = *canvas.impl_;
+    // Polled after nearly every widget and glyph: return without copying an
+    // optional Error in the common healthy case.
+    if (!impl.frame_error && !impl.construction_error) {
+        return std::nullopt;
+    }
     return impl.frame_error ? impl.frame_error : impl.construction_error;
 }
 

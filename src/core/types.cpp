@@ -1,5 +1,7 @@
 #include <wui/types.hpp>
 
+#include "float_bits.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -10,10 +12,6 @@ bool finite(float value) {
     return std::isfinite(value);
 }
 
-bool finite(Rect rect) {
-    return finite(rect.x) && finite(rect.y) && finite(rect.w) && finite(rect.h);
-}
-
 bool finite(Vec2 point) {
     return finite(point.x) && finite(point.y);
 }
@@ -22,14 +20,25 @@ float unit_channel(float value) {
     return finite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.0f;
 }
 
+// Finite x, y, w, h, x + w and y + h with nonnegative size. An infinite or
+// NaN operand always makes a sum infinite or NaN, so finite edge sums
+// already imply finite components. Tested branch-free.
 bool valid_extent(Rect rect) {
-    return finite(rect) && rect.w >= 0.0f && rect.h >= 0.0f &&
-           finite(rect.x + rect.w) && finite(rect.y + rect.h);
+    const auto nonfinite =
+        detail::nonfinite_bits(rect.x + rect.w) | detail::nonfinite_bits(rect.y + rect.h);
+    return ((nonfinite & detail::nonfinite_flag) == 0) & (rect.w >= 0.0f) & (rect.h >= 0.0f);
 }
 
 } // namespace
 
 Color premultiply(Color color) {
+    // Fast path: every channel already in [0, 1] (false for NaN and the
+    // infinities), where unit_channel is the identity. Validated canvas
+    // colors always take it.
+    if ((color.r >= 0.0f) & (color.r <= 1.0f) & (color.g >= 0.0f) & (color.g <= 1.0f) &
+        (color.b >= 0.0f) & (color.b <= 1.0f) & (color.a >= 0.0f) & (color.a <= 1.0f)) {
+        return {color.r * color.a, color.g * color.a, color.b * color.a, color.a};
+    }
     const float alpha = unit_channel(color.a);
     return {
         unit_channel(color.r) * alpha,
