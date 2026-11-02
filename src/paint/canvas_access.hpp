@@ -15,6 +15,8 @@ struct CanvasLayer {
 };
 struct CanvasAccess {
     static Status status(const Canvas&);
+    // Same as status().has_value(), without building an optional Error.
+    static bool failed(const Canvas&) noexcept;
     static void abort(Canvas&) noexcept;
     // Reserve ordering and a semantic at open; finalize only the background at
     // close. No callback replay or mutation of an already published packet.

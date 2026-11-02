@@ -69,8 +69,15 @@ inline Theme widget_theme(FrameState& frame, const WidgetOptions& options) {
     }
     apply_style(theme, options.style);
     if (!options.enabled) theme.accent = disabled_accent(theme);
-    if (auto error = validate_theme(theme))
-        frame.report(error->code, error->message.c_str(), true);
+    // frame.theme is validated by Context::create and set_theme, and every
+    // style scope by Frame::style before it is pushed; variants and the
+    // disabled accent only copy or blend those valid colors. validate_theme
+    // checks each field on its own, so only per-widget overrides can fail.
+    const auto& style = options.style;
+    if (style.control || style.text || style.accent || style.focus) {
+        if (auto error = validate_theme(theme))
+            frame.report(error->code, error->message.c_str(), true);
+    }
     return theme;
 }
 

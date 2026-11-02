@@ -861,7 +861,7 @@ TEST_CASE("rounded shapes recorded only in the previous frame are reused when th
     // A again, so A is found among the previous frame's records but cannot
     // be carried over into the full current generation. In frame 2, A is
     // in neither generation and is tessellated again.
-    const auto draw = [count](wui::Canvas& canvas, float y) {
+    const auto draw = [&](wui::Canvas& canvas, float y) {
         for (std::size_t i = 0; i < count; ++i) {
             canvas.rounded_rect({static_cast<float>(i % 256) * 16.0f,
                                  y + static_cast<float>(i / 256) * 16.0f, 10, 10},

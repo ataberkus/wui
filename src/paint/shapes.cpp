@@ -1758,6 +1758,10 @@ Result<DrawPacket> Canvas::finish() {
 
 namespace detail {
 
+bool CanvasAccess::failed(const Canvas& canvas) noexcept {
+    const auto& impl = *canvas.impl_;
+    return impl.frame_error.has_value() || impl.construction_error.has_value();
+}
 Status CanvasAccess::status(const Canvas& canvas) {
     const auto& impl = *canvas.impl_;
     // Polled after nearly every widget and glyph: return without copying an

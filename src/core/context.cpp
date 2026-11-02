@@ -57,6 +57,7 @@ bool FrameState::usable(std::uint64_t expected) {
 }
 bool FrameState::check_canvas() {
     if (error) return false;
+    if (!CanvasAccess::failed(canvas)) return true;
     if (auto failed = CanvasAccess::status(canvas)) report(std::move(*failed));
     return !error;
 }
