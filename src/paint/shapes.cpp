@@ -2,6 +2,7 @@
 
 #include "../core/float_bits.hpp"
 #include "canvas_access.hpp"
+#include "glyph_quad.hpp"
 #include "shapes_detail.hpp"
 
 #include <algorithm>
@@ -1458,7 +1459,6 @@ struct Canvas::Impl {
         const auto color = premultiply_valid(tint);
         Vertex* vertex = first_vertex;
         std::uint32_t* index = first_slot;
-        const auto b = static_cast<std::uint32_t>(vertex_size);
         // The texture run being written starts at the logical sizes, which
         // advance as each run is recorded (as they would quad by quad).
         TextureHandle texture = glyphs.front().texture;
@@ -1473,52 +1473,25 @@ struct Canvas::Impl {
                 end_mesh(run_first, texture);
             }
         };
-        // Indices of the next quad: two triangles over its four corners. All
-        // eight lanes are stored (two 128-bit stores) and advance together;
-        // the last two land in the next quad's slots, or in the two slack
-        // slots made after the run, beyond the logical size.
-        std::array<std::uint32_t, 8> quad{b, b + 1, b + 2, b, b + 2, b + 3, b + 4, b + 5};
+        const detail::GlyphCorners corners(offset, color);
+        auto b = static_cast<std::uint32_t>(vertex_size); // the next quad's first vertex
         bool invalid = false;
         for (const auto& glyph : glyphs) {
-            // Corner coordinates as image() computes them: `low` holds the
-            // moved bounds origin and the uv origin, `high` adds the extents.
-            const std::array low{glyph.bounds.x + offset.x, glyph.bounds.y + offset.y,
-                                 glyph.uv.x, glyph.uv.y};
-            const std::array extent{glyph.bounds.w, glyph.bounds.h, glyph.uv.w, glyph.uv.h};
-            std::array<float, 4> high;
-            std::uint32_t nonfinite = 0;
-            for (std::size_t k = 0; k < 4; ++k) {
-                high[k] = low[k] + extent[k];
-                nonfinite |= detail::nonfinite_bits(high[k]);
-            }
-            // valid_rect() of the moved bounds and of the uv. A NaN extent
-            // makes its sum NaN, so the minimum needs to be exact only when
-            // no extent is NaN, and then it is.
-            const float least_size = std::min(extent[0], extent[1]);
-            if ((nonfinite & detail::nonfinite_flag) != 0 ||
-                !(std::min(least_size, std::min(extent[2], extent[3])) >= 0.0f)) {
-                invalid = true;
-                break;
-            }
-            // Both extents are now nonnegative numbers: one is zero exactly
-            // when their minimum is not positive.
-            if (!(least_size > 0.0f)) {
+            const auto verdict = corners(glyph, vertex, index, b);
+            if (verdict != detail::GlyphVerdict::quad) {
+                if (verdict == detail::GlyphVerdict::invalid) {
+                    invalid = true;
+                    break;
+                }
                 continue;
             }
             if (!(glyph.texture == texture)) {
-                record_run();
+                record_run(); // the glyph's quad is not counted yet
                 texture = glyph.texture;
             }
-            vertex[0] = {{low[0], low[1]}, {low[2], low[3]}, color};
-            vertex[1] = {{high[0], low[1]}, {high[2], low[3]}, color};
-            vertex[2] = {{high[0], high[1]}, {high[2], high[3]}, color};
-            vertex[3] = {{low[0], high[1]}, {low[2], high[3]}, color};
             vertex += 4;
-            std::copy(quad.begin(), quad.end(), index);
             index += 6;
-            for (auto& value : quad) {
-                value += 4;
-            }
+            b += 4;
         }
         record_run();
         if (invalid) {

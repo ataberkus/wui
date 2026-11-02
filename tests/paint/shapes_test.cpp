@@ -3,6 +3,7 @@
 #include <wui/canvas.hpp>
 
 #include "../../src/paint/canvas_access.hpp"
+#include "../../src/paint/glyph_quad.hpp"
 #include "../../src/paint/shapes_detail.hpp"
 
 #include <algorithm>
@@ -1384,4 +1385,92 @@ TEST_CASE("strokes beyond the mesh cache bounds are still drawn every frame") {
         const auto expected = frame(fresh, with_b);
         CHECK(same_packet(*actual, *expected));
     }
+}
+
+namespace {
+
+// Canvas::image's handling of one glyph, written out independently.
+wui::detail::GlyphVerdict reference_glyph(const wui::GlyphQuad& glyph, wui::Vec2 offset,
+                                          wui::Color color, std::array<wui::Vertex, 4>& out,
+                                          std::array<std::uint32_t, 6>& indices,
+                                          std::uint32_t base) {
+    const wui::Rect bounds{glyph.bounds.x + offset.x, glyph.bounds.y + offset.y, glyph.bounds.w,
+                           glyph.bounds.h};
+    const auto valid = [](wui::Rect r) {
+        return std::isfinite(r.x + r.w) && std::isfinite(r.y + r.h) && r.w >= 0 && r.h >= 0;
+    };
+    if (!valid(bounds) || !valid(glyph.uv)) return wui::detail::GlyphVerdict::invalid;
+    if (bounds.w == 0 || bounds.h == 0) return wui::detail::GlyphVerdict::empty;
+    const auto uv = glyph.uv;
+    out[0] = {{bounds.x, bounds.y}, {uv.x, uv.y}, color};
+    out[1] = {{bounds.x + bounds.w, bounds.y}, {uv.x + uv.w, uv.y}, color};
+    out[2] = {{bounds.x + bounds.w, bounds.y + bounds.h}, {uv.x + uv.w, uv.y + uv.h}, color};
+    out[3] = {{bounds.x, bounds.y + bounds.h}, {uv.x, uv.y + uv.h}, color};
+    indices = {base, base + 1, base + 2, base, base + 2, base + 3};
+    return wui::detail::GlyphVerdict::quad;
+}
+
+template <typename Write>
+void check_glyph_corners(Write write, const wui::GlyphQuad& glyph, wui::Vec2 offset,
+                         wui::Color color, std::uint32_t base) {
+    std::array<wui::Vertex, 4> expected{};
+    std::array<std::uint32_t, 6> expected_indices{};
+    const auto verdict = reference_glyph(glyph, offset, color, expected, expected_indices, base);
+    std::array<wui::Vertex, 4> actual{};
+    std::array<std::uint32_t, 8> actual_indices{}; // two slack slots
+    REQUIRE(write(glyph, actual.data(), actual_indices.data(), base) == verdict);
+    if (verdict != wui::detail::GlyphVerdict::quad) return;
+    for (std::size_t i = 0; i < 4; ++i) {
+        CHECK(std::bit_cast<std::array<std::uint32_t, 8>>(actual[i]) ==
+              std::bit_cast<std::array<std::uint32_t, 8>>(expected[i]));
+    }
+    CHECK(std::equal(expected_indices.begin(), expected_indices.end(), actual_indices.begin()));
+}
+
+} // namespace
+
+TEST_CASE("scalar and packed glyph corners match image() for every value class") {
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    const float big = std::numeric_limits<float>::max();
+    const float tiny = std::numeric_limits<float>::denorm_min();
+    const std::array specials{0.0f, -0.0f, 1.0f, -1.0f, 0.5f, 7.25f, -3.75f, 1.0e-30f, tiny,
+                              -tiny, big, -big, 3.0e38f, 1.0e20f, nan, inf, -inf, 0.125f};
+    std::uint32_t seed = 987654321;
+    const auto next = [&seed] {
+        seed = seed * 1664525u + 1013904223u;
+        return seed;
+    };
+    const auto value = [&] {
+        const auto pick = next();
+        if (pick % 4 == 0) return specials[(pick >> 8) % specials.size()];
+        // Mostly ordinary glyph-sized values, both signs, many magnitudes.
+        const float magnitude = static_cast<float>((pick >> 8) % 100000) / 64.0f;
+        return (pick & 0x10) ? -magnitude * 0.01f : magnitude;
+    };
+    // Extents are usually nonnegative, so all three verdicts are common.
+    const auto extent = [&] {
+        const float v = value();
+        return next() % 4 != 0 ? std::abs(v) : v;
+    };
+    const wui::Color color{0.25f, 0.5f, 0.125f, 0.5f};
+    std::array<int, 3> verdicts{};
+    for (int i = 0; i < 20000; ++i) {
+        const wui::GlyphQuad glyph{{next(), next()}, {value(), value(), extent(), extent()},
+                                   {value(), value(), extent(), extent()}};
+        const wui::Vec2 offset{value(), value()};
+        const wui::detail::GlyphCorners corners(offset, color);
+        const auto base = next() >> 4;
+        std::array<wui::Vertex, 4> unused{};
+        std::array<std::uint32_t, 6> unused_indices{};
+        ++verdicts[static_cast<std::size_t>(
+            reference_glyph(glyph, offset, color, unused, unused_indices, base))];
+        check_glyph_corners([&](const auto&... args) { return corners.scalar(args...); }, glyph,
+                            offset, color, base);
+#ifdef WUI_GLYPH_CORNERS_SSE2
+        check_glyph_corners([&](const auto&... args) { return corners.packed(args...); }, glyph,
+                            offset, color, base);
+#endif
+    }
+    for (const int count : verdicts) CHECK(count > 500);
 }
