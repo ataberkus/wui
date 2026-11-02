@@ -2,6 +2,7 @@
 
 #include <wui/context.hpp>
 #include <wui/layout.hpp>
+#include "../layout/flow_detail.hpp"
 #include "../paint/canvas_access.hpp"
 #include <charconv>
 #include <cmath>
@@ -47,6 +48,10 @@ struct Container {
 };
 struct RowState {
     Id id;
+    // id_seed(child_id(id, "cell")), hashed once per row: cell i is
+    // Id{id_append(cell_seed, <the eight bytes of std::uint64_t{i}>)}, which
+    // is child_id(child_id(id, "cell"), <the same bytes>) (see id_hash.hpp).
+    std::uint64_t cell_seed;
     std::size_t first, count, next, parent_depth;
     float tallest = 0;
     bool cell_open = false;
@@ -80,7 +85,6 @@ struct EditState {
     std::pmr::vector<EditSnapshot> undo;
     std::pmr::vector<EditLine> lines; // text_area wrap layout of draft
     std::size_t undo_bytes = 0, caret = 0, anchor = 0;
-    std::uint64_t last_present = 0;
     bool composition_active = false;
     float layout_width = -1;  // width `lines` were wrapped at; < 0 means stale
     float preferred_x = -1;   // caret column kept across vertical moves
@@ -149,11 +153,25 @@ struct FrameState {
     // recording it. Subsequent calls become inert until finalization/abort.
     void report(ErrorCode, const char* message, bool contract = false) noexcept;
     void report(Error) noexcept;
-    bool usable(std::uint64_t);
-    bool check_canvas();
+    // Inline fast paths: both are polled several times per widget, and the
+    // common healthy case is only a few loads. Failures go out of line.
+    bool usable(std::uint64_t expected) {
+        if (!owner_alive || !active || generation != expected) return report_unusable();
+        return !error && check_canvas();
+    }
+    // Reports a failed canvas's first error (unless an error is already
+    // recorded) and returns whether the frame is still error-free.
+    bool check_canvas() {
+        if (error) return false;
+        if (!CanvasAccess::failed(canvas)) return true;
+        return report_canvas_failure();
+    }
+    bool report_unusable();
+    bool report_canvas_failure();
     void abort() noexcept;
     // After a completed frame: marks widgets seen in it present at
-    // `completed` and erases widgets absent for 120 completed frames.
+    // `completed` and erases widgets absent for 120 completed frames,
+    // together with their editor and grid state.
     void prune() noexcept;
     WidgetState* register_widget(Id);
     bool valid_input(const FrameInput&);
@@ -161,15 +179,26 @@ struct FrameState {
     Id text_id();
     bool copy_label(std::string_view);
     void note_choice_error(std::string_view);
-    Rect take(float height);
-    Rect clip() const;
+    // Allocates the next row of the current container's flow; reports a
+    // refused row (or returns {} after an error). Inline healthy path.
+    Rect take(float height) {
+        Rect row;
+        if (!error && FlowAccess::take(stack.back().flow, height, row)) return row;
+        return refuse_take(height);
+    }
+    Rect refuse_take(float height);
+    Rect clip() const { return stack.back().clip; }
     // size <= 0 selects the theme size for the role (display uses heading size).
     std::shared_ptr<const TextRun> shape(std::string_view, FontRole, float size = 0);
     // Folds enclosing disabled style scopes into the caller's options.
     WidgetOptions effective(WidgetOptions options) const {
+        apply_scopes(options);
+        return options;
+    }
+    // effective() in place, for a caller that owns its copy of the options.
+    void apply_scopes(WidgetOptions& options) const {
         for (const auto& scope : style_stack)
             if (scope.disabled) options.enabled = false;
-        return options;
     }
     void close_area(std::uint64_t, std::size_t depth) noexcept;
     void glyphs(const TextRun&, Vec2 top_left, Color);
@@ -192,9 +221,11 @@ struct FrameState {
     // True once the owner has been hovered for the tooltip delay; a nonempty
     // message is then queued as the standard text tooltip.
     bool tooltip_for_owner(Id owner, std::string_view message);
+    // Editor and grid state belong to a widget registered this frame:
+    // prune() erases them only together with that widget, so state created
+    // for any other id would never be released.
     EditState* edit_state(Id id);
     bool account_edit_bytes(std::size_t bytes);
-    void prune_edits() noexcept;
     GridState* grid_state(Id id);
     bool input_blocked() const { return interaction.blocked(); }
     void note_diagnostic(ErrorCode code, std::string_view message);
@@ -239,9 +270,10 @@ inline std::optional<Vec2> focused_text_caret(const FrameState& frame) {
 // operations report failures on FrameState. No model pointer escapes the call.
 void emit_text(FrameState&, std::string_view, FontRole, TextOptions = {},
                bool description = false, bool validation = false);
-bool emit_button(FrameState&, std::string_view key, std::string_view label, WidgetOptions);
+bool emit_button(FrameState&, std::string_view key, std::string_view label,
+                 const WidgetOptions&);
 bool emit_icon_button(FrameState&, std::string_view key, std::string_view label,
-                      TextureHandle image, WidgetOptions);
+                      TextureHandle image, const WidgetOptions&);
 bool emit_checkbox(FrameState&, std::string_view key, std::string_view label, bool&, WidgetOptions);
 bool emit_slider(FrameState&, std::string_view key, std::string_view label,
                  float&, float min, float max, WidgetOptions);

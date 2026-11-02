@@ -132,6 +132,7 @@ TEST_CASE("fast geometry and color checks match the field-by-field definitions b
                         const auto swapped = wui::intersect(other, r);
                         const auto want_swapped = reference_intersect(other, r);
                         CHECK((same_bits(swapped.x, want_swapped.x) &&
+                               same_bits(swapped.y, want_swapped.y) &&
                                same_bits(swapped.w, want_swapped.w) &&
                                same_bits(swapped.h, want_swapped.h)));
                     }

@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -467,6 +468,72 @@ TEST_CASE("nested rows keep outer cell geometry stable") {
     CHECK(semantic(packet, wui::Role::text, "Outer second").bounds.x == doctest::Approx(88));
 }
 
+TEST_CASE("row cells, keyed widgets and positional text keep their established ids") {
+    // The established derivation, spelled with the public child_id: the root
+    // scope is Id{1}; explicit keys live under child_id(scope, "key"); cell i
+    // of a row is child_id(child_id(row, "cell"), <bytes of std::uint64_t{i}>);
+    // positional text n of a scope is child_id(child_id(scope, "text"), <bytes
+    // of std::uint64_t{n}>).
+    const auto keyed = [](wui::Id scope, std::string_view key) {
+        return wui::child_id(wui::child_id(scope, "key"), key);
+    };
+    const auto ordinal = [](wui::Id scope, std::string_view space, std::uint64_t index) {
+        return wui::child_id(wui::child_id(scope, space),
+                             {reinterpret_cast<const char*>(&index), sizeof(index)});
+    };
+    const std::array<wui::Column, 3> columns{{{wui::ColumnKind::share, 1},
+                                              {wui::ColumnKind::share, 1},
+                                              {wui::ColumnKind::share, 1}}};
+    auto context = make_context();
+    auto frame = begin(*context);
+    {
+        auto outer = frame.row("outer", columns);
+        for (int index = 0; index < 3; ++index) {
+            auto cell = outer.cell();
+            frame.text("Text " + std::to_string(index));
+            frame.button("action", "Button " + std::to_string(index));
+            if (index == 2) {
+                auto nested = frame.row("nested", columns);
+                auto first = nested.cell();
+                frame.button("deep", "Nested button");
+            }
+        }
+    }
+    {
+        auto again = frame.row("again", columns);
+        { auto skipped = again.cell(); }
+        auto second = again.cell();
+        frame.button("action", "Second cell of again");
+    }
+    const auto packet = finish(frame);
+    const wui::Id outer = keyed(wui::Id{1}, "outer");
+    std::array<std::uint64_t, 3> buttons{}, texts{};
+    for (std::uint64_t index = 0; index < 3; ++index) {
+        const wui::Id cell = ordinal(outer, "cell", index);
+        const auto suffix = std::to_string(index);
+        buttons[index] = semantic(packet, wui::Role::button, "Button " + suffix).id.value;
+        texts[index] = semantic(packet, wui::Role::text, "Text " + suffix).id.value;
+        CHECK(buttons[index] == keyed(cell, "action").value);
+        CHECK(texts[index] == ordinal(cell, "text", 0).value);
+    }
+    const wui::Id nested = keyed(ordinal(outer, "cell", 2), "nested");
+    CHECK(semantic(packet, wui::Role::button, "Nested button").id ==
+          keyed(ordinal(nested, "cell", 0), "deep"));
+    const wui::Id again = keyed(wui::Id{1}, "again");
+    CHECK(semantic(packet, wui::Role::button, "Second cell of again").id ==
+          keyed(ordinal(again, "cell", 1), "action"));
+    // Literal values pin the bytes hashed for each cell index (little-endian
+    // object representation of the 64-bit index on every supported target).
+    if constexpr (std::endian::native == std::endian::little) {
+        CHECK(buttons[0] == 0xd99b63f0da827b81ULL);
+        CHECK(buttons[1] == 0x688930a128e8a102ULL);
+        CHECK(buttons[2] == 0x3e01981b203cecbaULL);
+        CHECK(texts[0] == 0x726d1a0f882c38fdULL);
+        CHECK(texts[1] == 0x25104d39ad8861f3ULL);
+        CHECK(texts[2] == 0x9e5b66db5f2613bbULL);
+    }
+}
+
 TEST_CASE("nested scroll claims wheel before its parent and paints within its clip") {
     auto context = make_context();
     wui::FrameInput input{{0, 0, 240, 200}};
@@ -658,6 +725,157 @@ TEST_CASE("retained allocation capacity becomes available after 120 absent compl
     reused.button("replacement", "Admitted after expiry");
     auto packet = finish(reused);
     CHECK(semantic(packet, wui::Role::button, "Admitted after expiry").enabled);
+}
+
+namespace {
+wui::InputEvent typed(std::string text) {
+    wui::InputEvent event{wui::EventKind::text};
+    event.text = std::move(text);
+    return event;
+}
+wui::InputEvent undo_key() {
+    auto event = key_event(wui::EventKind::key_down, wui::Key::z);
+    event.control = true;
+    return event;
+}
+// Completes `count` frames that emit nothing.
+void absent_frames(wui::Context& context, int count) {
+    for (int index = 0; index < count; ++index) {
+        auto frame = begin(context);
+        finish(frame);
+    }
+}
+}
+
+TEST_CASE("editor state is released with its widget after 120 absent completed frames") {
+    // A long model makes each editor's retained draft and published copy
+    // dominate node and bucket bookkeeping in the public retained byte total.
+    for (const bool area : {false, true}) {
+        CAPTURE(area);
+        auto context = make_context();
+        std::string text(3000, 'x');
+        const auto emit = [&] {
+            auto frame = begin(*context);
+            if (area) CHECK_FALSE(frame.text_area("field", "Field", text, 120));
+            else CHECK_FALSE(frame.text_input("field", "Field", text));
+            finish(frame);
+        };
+        emit();
+        const std::size_t present = context->statistics().retained_bytes;
+        REQUIRE(present >= 2 * text.size());
+        absent_frames(*context, 119);
+        // Widget and editor are both still retained one frame before expiry.
+        CHECK(context->statistics().retained_bytes == present);
+        absent_frames(*context, 1);
+        // The widget expired, and its editor (draft plus published copy) with it.
+        CHECK(context->statistics().retained_bytes + 2 * text.size() <= present);
+        // A returning editor is allocated afresh, and kept while it is present.
+        emit();
+        CHECK(context->statistics().retained_bytes == present);
+        for (int frame = 0; frame < 130; ++frame) emit();
+        CHECK(context->statistics().retained_bytes == present);
+    }
+}
+
+TEST_CASE("a text input that returns after expiry starts with a fresh undo history") {
+    auto context = make_context();
+    std::string value = "one";
+    const auto step = [&](std::vector<wui::InputEvent> events) {
+        wui::FrameInput input{{0, 0, 400, 300}};
+        input.events = std::move(events);
+        auto frame = begin(*context, input);
+        const bool changed = frame.text_input("field", "Field", value);
+        finish(frame);
+        return changed;
+    };
+    const auto focus = [&] {
+        step({});
+        step({key_event(wui::EventKind::key_down, wui::Key::tab)});
+    };
+    focus();
+    CHECK(step({typed("2")}));
+    CHECK(value == "one2");
+    // Absent for 119 completed frames: the editor, and its undo step, survive.
+    absent_frames(*context, 119);
+    focus();
+    CHECK(step({undo_key()}));
+    CHECK(value == "one");
+    CHECK(step({typed("3")}));
+    CHECK(value == "one3");
+    // Absent for 120 completed frames: the editor expired with its widget, so
+    // the returning field has no undo step left from its previous life.
+    absent_frames(*context, 120);
+    focus();
+    CHECK_FALSE(step({undo_key()}));
+    CHECK(value == "one3");
+}
+
+TEST_CASE("a hidden text input keeps its caret until its widget expires") {
+    // Hiding a field (closed popup, collapsed section, list row scrolled
+    // away) only stops emitting it. Its editor, and so its caret, must
+    // survive while the widget is retained, and focus must still work.
+    auto context = make_context();
+    std::string value = "one";
+    const auto step = [&](std::vector<wui::InputEvent> events) {
+        wui::FrameInput input{{0, 0, 400, 300}};
+        input.events = std::move(events);
+        auto frame = begin(*context, input);
+        const bool changed = frame.text_input("field", "Field", value);
+        finish(frame);
+        return changed;
+    };
+    const auto focus = [&] {
+        step({});
+        step({key_event(wui::EventKind::key_down, wui::Key::tab)});
+        CHECK(context->statistics().focused != wui::Id{});
+    };
+    focus();
+    step({key_event(wui::EventKind::key_down, wui::Key::home)});
+    absent_frames(*context, 119);
+    focus();
+    CHECK(step({typed("X")}));
+    CHECK(value == "Xone");
+    // After expiry the field starts afresh, with the caret after the text.
+    step({key_event(wui::EventKind::key_down, wui::Key::home)});
+    absent_frames(*context, 120);
+    focus();
+    CHECK(step({typed("Y")}));
+    CHECK(value == "XoneY");
+}
+
+TEST_CASE("data grid column widths expire with the grid after 120 absent completed frames") {
+    auto context = make_context();
+    const std::array<wui::GridColumn, 2> columns{{{"A", 120}, {"B", 120}}};
+    std::optional<std::size_t> selected;
+    wui::GridSort sort;
+    const auto cell = [](std::size_t, std::size_t) { return std::string("cell"); };
+    const auto step = [&](std::vector<wui::InputEvent> events = {}) {
+        wui::FrameInput input{{0, 0, 400, 300}};
+        input.events = std::move(events);
+        auto frame = begin(*context, input);
+        frame.data_grid("entries", "Entries", columns, 10, cell, selected, sort, 200);
+        auto packet = finish(frame);
+        const auto found = std::find_if(packet->semantics.begin(), packet->semantics.end(),
+            [](const wui::Semantic& item) {
+                return item.role == wui::Role::grid_header && item.label == "A";
+            });
+        REQUIRE(found != packet->semantics.end());
+        return found->bounds;
+    };
+    const wui::Rect initial = step();
+    // Dragging A's right edge widens A; the width lives in the grid's state.
+    const auto widen = [&] {
+        const float edge = initial.x + initial.w;
+        step({{wui::EventKind::pointer_down, {edge, initial.y + 4}},
+              {wui::EventKind::pointer_move, {edge + 40, initial.y + 4}},
+              {wui::EventKind::pointer_up, {edge + 40, initial.y + 4}}});
+        CHECK(step().w == doctest::Approx(initial.w + 40));
+    };
+    widen();
+    absent_frames(*context, 119);
+    CHECK(step().w == doctest::Approx(initial.w + 40));
+    absent_frames(*context, 120);
+    CHECK(step().w == doctest::Approx(initial.w));
 }
 
 TEST_CASE("retained byte errors stop later model mutation") {
@@ -1010,6 +1228,36 @@ TEST_CASE("icon button leases its texture and activates with an accessible label
     CHECK(semantic(packet, wui::Role::button, "Help").bounds.h == 36);
     CHECK(std::any_of(packet->textures.begin(), packet->textures.end(),
         [icon](const auto& texture) { return texture->handle == icon; }));
+}
+
+TEST_CASE("a canvas failure before a button reports the canvas error and suppresses activation") {
+    auto desc = fixture_desc();
+    const auto textures = desc.textures;
+    constexpr std::array<std::byte, 4> rgba{std::byte{255}, std::byte{255}, std::byte{255},
+                                            std::byte{255}};
+    const auto created = textures->create(1, 1, rgba, wui::AlphaMode::straight);
+    REQUIRE(std::holds_alternative<wui::TextureHandle>(created));
+    const auto icon = std::get<wui::TextureHandle>(created);
+    auto context = make_context(std::move(desc));
+    for (const bool with_icon : {false, true}) {
+        CAPTURE(with_icon);
+        wui::FrameInput input{{0, 0, 400, 300}};
+        input.events = {{wui::EventKind::pointer_down, {20, 20}},
+                        {wui::EventKind::pointer_up, {20, 20}}};
+        auto frame = begin(*context, input);
+        // Custom paint fails the canvas; the widget must not route the click.
+        frame.canvas().push_clip({0, 0, -1, -1});
+        CHECK_FALSE((with_icon ? frame.icon_button("help", "Help", icon)
+                               : frame.button("help", "Help")));
+        auto result = frame.finish();
+        REQUIRE(std::holds_alternative<wui::Error>(result));
+        CHECK(std::get<wui::Error>(result).code == wui::ErrorCode::invalid_argument);
+        CHECK(std::get<wui::Error>(result).message == "Canvas clip must be finite and nonnegative");
+        // The next frame routes normally.
+        auto next = begin(*context, input);
+        CHECK((with_icon ? next.icon_button("help", "Help", icon) : next.button("help", "Help")));
+        finish(next);
+    }
 }
 
 TEST_CASE("tab selection tracks stable values across keyboard activation and reorder") {

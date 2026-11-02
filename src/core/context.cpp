@@ -1,5 +1,6 @@
 #include "context_detail.hpp"
 #include "../layout/flow_detail.hpp"
+#include "id_hash.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -48,16 +49,11 @@ void FrameState::report(ErrorCode code, const char* message, bool contract) noex
 void FrameState::report(Error value) noexcept {
     if (!error) error = std::move(value);
 }
-bool FrameState::usable(std::uint64_t expected) {
-    if (!owner_alive || !active || generation != expected) {
-        report(ErrorCode::invalid_frame, "Frame no longer belongs to an active Context", true);
-        return false;
-    }
-    return !error && check_canvas();
+bool FrameState::report_unusable() {
+    report(ErrorCode::invalid_frame, "Frame no longer belongs to an active Context", true);
+    return false;
 }
-bool FrameState::check_canvas() {
-    if (error) return false;
-    if (!CanvasAccess::failed(canvas)) return true;
+bool FrameState::report_canvas_failure() {
     if (auto failed = CanvasAccess::status(canvas)) report(std::move(*failed));
     return !error;
 }
@@ -76,41 +72,30 @@ void FrameState::abort() noexcept {
 void FrameState::prune() noexcept {
     // One pass over the widget map: widgets emitted in the frame that just
     // completed become present at `completed` (and so cannot be stale);
-    // the others are erased once absent for 120 completed frames.
+    // the others are erased once absent for 120 completed frames. Editor and
+    // grid state exist only for a registered widget id, so they are erased
+    // with it: none of them can outlive its widget.
     for (auto it = widgets.begin(); it != widgets.end();) {
         auto& widget = it->second;
         if (widget.seen == generation) {
             widget.last_present = completed;
             ++it;
         } else if (completed >= widget.last_present && completed - widget.last_present >= 120) {
+            if (!edits.empty()) edits.erase(it->first);
+            if (!grids.empty()) grids.erase(it->first);
             it = widgets.erase(it);
         } else {
             ++it;
         }
     }
-    prune_edits();
-}
-void FrameState::prune_edits() noexcept {
-    for (auto it = edits.begin(); it != edits.end();) {
-        const auto owner = widgets.find(it->first);
-        if (owner == widgets.end() || completed < owner->second.last_present ||
-            completed - owner->second.last_present < 120) {
-            ++it;
-            continue;
-        }
-        it = edits.erase(it);
-    }
-    // Grid state of a widget pruned above goes with it.
-    for (auto it = grids.begin(); it != grids.end();) {
-        if (widgets.contains(it->first)) ++it;
-        else it = grids.erase(it);
-    }
 }
 GridState* FrameState::grid_state(Id id) {
     if (error) return nullptr;
     auto found = grids.find(id.value);
-    if (found == grids.end())
+    if (found == grids.end()) {
+        assert(widgets.contains(id.value) && "grid state needs a registered widget");
         found = grids.try_emplace(id.value, GridState{std::pmr::vector<float>{&memory}}).first;
+    }
     return &found->second;
 }
 WidgetState* FrameState::register_widget(Id id) {
@@ -134,8 +119,6 @@ WidgetState* FrameState::register_widget(Id id) {
     found->second.bounds = {};
     found->second.seen = generation;
     ++count;
-    const auto editor = edits.find(id.value);
-    if (editor != edits.end()) editor->second.last_present = completed;
     return &found->second;
 }
 bool FrameState::account_edit_bytes(std::size_t bytes) {
@@ -155,6 +138,7 @@ EditState* FrameState::edit_state(Id id) {
             report(ErrorCode::capacity, "Per-frame widget limit exceeded");
             return nullptr;
         }
+        assert(widgets.contains(id.value) && "editor state needs a registered widget");
         EditState state{std::pmr::string{&memory}, std::pmr::string{&memory},
                         std::pmr::string{&memory}, std::pmr::vector<EditSnapshot>{&memory},
                         std::pmr::vector<EditLine>{&memory}};
@@ -178,13 +162,13 @@ Id FrameState::keyed_id(std::string_view key) {
         return {};
     }
     // Explicit keys and positional text occupy separate ID namespaces.
-    return child_id(child_id(stack.back().id, "key"), key);
+    return hash_child_id(hash_child_id(stack.back().id, "key"), key);
 }
 Id FrameState::text_id() {
     auto& container = stack.back();
     const auto ordinal = container.next_text++;
-    return child_id(child_id(container.id, "text"),
-                    {reinterpret_cast<const char*>(&ordinal), sizeof(ordinal)});
+    return hash_child_id(hash_child_id(container.id, "text"),
+                         {reinterpret_cast<const char*>(&ordinal), sizeof(ordinal)});
 }
 bool FrameState::copy_label(std::string_view label) {
     if (error) return false;
@@ -202,20 +186,16 @@ void FrameState::note_diagnostic(ErrorCode code, std::string_view message) {
     if (error || diagnostics.size() == 64) return;
     diagnostics.push_back({code, std::string(message)});
 }
-Rect FrameState::take(float height) {
+Rect FrameState::refuse_take(float height) {
     if (error) return {};
-    auto& flow = stack.back().flow;
-    Rect row;
-    if (FlowAccess::take(flow, height, row)) return row;
     // A refused take leaves the flow unchanged; the checked call says why.
-    auto result = flow.take(height);
+    auto result = stack.back().flow.take(height);
     if (auto* failed = std::get_if<Error>(&result)) {
         report(failed->code, failed->message.c_str(), true);
         return {};
     }
     return std::get<Rect>(result);
 }
-Rect FrameState::clip() const { return stack.back().clip; }
 std::shared_ptr<const TextRun> FrameState::shape(std::string_view value, FontRole role, float size) {
     if (error) return {};
     // Display text defaults to the heading size; Theme has no separate token.
