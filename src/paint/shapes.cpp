@@ -2,7 +2,9 @@
 
 #include "../core/float_bits.hpp"
 #include "canvas_access.hpp"
+#include "glyph_quad.hpp"
 #include "shapes_detail.hpp"
+#include "simd.hpp"
 
 #include <algorithm>
 #include <array>
@@ -492,15 +494,22 @@ void fringe_outline(std::span<const Vec2> points, float fringe, std::vector<Vec2
 // Cross-frame memo of rounded outlines and their antialiasing fringes.
 // rounded_outline and fringe_outline are pure functions of the exact
 // bounds, radius and scale, and immediate-mode UIs repaint mostly the same
-// rectangles every frame, so a shape recorded during the previous frame is
-// reused bit for bit instead of being tessellated again. Two generations
-// alternate: lookups see the previous frame's entries and this frame's,
-// and every shape used this frame is (re)recorded into the current
-// generation, whose storage is reused from two frames ago. Storage grows
-// only when a frame records more than any earlier frame in that generation
-// (warm-up); beyond the per-frame bounds in shapes_detail.hpp shapes are
-// simply not recorded and are tessellated every time. Storage is at most
-// 8 MiB of points and 2.4 MiB of slots per generation.
+// rectangles every frame, so a recorded shape is reused bit for bit instead
+// of being tessellated again. Two generations alternate: lookups see the
+// recording generation and the previous one, and a shape found only in the
+// previous generation is (re)recorded into the recording one. rotate(),
+// called at the start of each frame, starts a new recording generation
+// (reusing the storage of the one before the previous) only once the
+// recording generation is mostly stale: when shapes used in the frame that
+// just ended account for less than half of its points, or when it refused a
+// shape for lack of room. A UI that repaints the same shapes therefore keeps
+// finding them in the recording generation and copies nothing, while
+// shapes that stop being drawn are dropped within two rotations. Storage
+// grows only when a generation records more than it held before (warm-up);
+// beyond the per-generation bounds in shapes_detail.hpp shapes are simply
+// not recorded and are tessellated every time (and the next frame starts a
+// fresh generation). Storage is at most 8 MiB of points and 2.4 MiB of slots
+// per generation.
 class OutlineCache {
 public:
     static constexpr std::size_t max_entries = detail::outline_cache_entry_limit;
@@ -533,10 +542,22 @@ public:
 
     // Called at the start of each frame.
     void rotate() noexcept {
+        const auto& recording = generations_[recording_];
+        const bool stale = recording.stamp == 0 || recording.refused ||
+                           recording.used > 2 * live_points_;
+        live_points_ = 0;
+        // A new frame needs a value no slot's `frame` holds. After 2^32
+        // frames one can repeat; that shape then goes uncounted in
+        // live_points_ for a frame, which at most starts a generation early.
+        ++frame_;
+        if (!stale) {
+            return;
+        }
         std::swap(recording_, previous_);
         auto& next = generations_[recording_];
         next.used = 0;
         next.entries = 0;
+        next.refused = false;
         if (++stamp_ == 0) { // after 2^32 frames: forget every slot explicitly
             for (auto& generation : generations_) {
                 for (auto& slot : generation.slots) slot.stamp = 0;
@@ -547,12 +568,16 @@ public:
         next.stamp = stamp_;
     }
 
-    // The shape recorded for `key` this frame or the previous one. A
-    // previous-frame shape is carried into the current generation (when
-    // within bounds) so that it stays available to the next frame.
+    // The shape recorded for `key` in the recording or the previous
+    // generation. A shape from the previous generation is carried into the
+    // recording one (when within bounds) so that it stays available.
     std::optional<Shape> find(const Key& key, std::uint64_t key_hash) {
         auto& current = generations_[recording_];
-        if (const auto* slot = lookup(current, key, key_hash)) {
+        if (auto* slot = lookup(current, key, key_hash)) {
+            if (slot->frame != frame_) {
+                slot->frame = frame_;
+                live_points_ += std::size_t{slot->count} * 2;
+            }
             return view(current, *slot);
         }
         auto& previous = generations_[previous_];
@@ -566,14 +591,17 @@ public:
         return std::nullopt;
     }
 
-    // Copies a freshly tessellated shape into the current generation and
-    // returns the stored copy, or nothing beyond the per-frame bounds.
+    // Copies a freshly tessellated shape into the recording generation and
+    // returns the stored copy, or nothing beyond the per-generation bounds.
     std::optional<Shape> record(const Key& key, std::uint64_t key_hash,
                                 std::span<const Vec2> outline, std::span<const Vec2> fringe) {
         auto& current = generations_[recording_];
         const auto needed = outline.size() * 2;
-        if (outline.size() != fringe.size() || current.entries >= max_entries ||
-            current.used + needed > max_points) {
+        if (outline.size() != fringe.size()) {
+            return std::nullopt;
+        }
+        if (current.entries >= max_entries || current.used + needed > max_points) {
+            current.refused = true;
             return std::nullopt;
         }
         if ((current.entries + 1) * 2 > current.slots.size()) {
@@ -588,8 +616,9 @@ public:
         current.used += needed;
         auto* slot = probe(current, key, key_hash);
         *slot = {key, static_cast<std::uint32_t>(offset),
-                 static_cast<std::uint32_t>(outline.size()), current.stamp};
+                 static_cast<std::uint32_t>(outline.size()), current.stamp, frame_};
         ++current.entries;
+        live_points_ += needed;
         return view(current, *slot);
     }
 
@@ -598,6 +627,7 @@ private:
         Key key;
         std::uint32_t offset = 0, count = 0; // count outline points, then as many fringe points
         std::uint32_t stamp = 0;             // live while equal to its generation's stamp
+        std::uint32_t frame = 0;             // the last frame that used the shape
     };
     struct Generation {
         // Raw storage rather than a vector: appending is a plain copy, with
@@ -607,6 +637,7 @@ private:
         std::vector<Slot> slots; // open addressing; size is zero or a power of two
         std::size_t entries = 0;
         std::uint32_t stamp = 0;
+        bool refused = false; // a shape did not fit since the generation started
     };
 
     static Shape view(const Generation& generation, const Slot& slot) {
@@ -622,9 +653,9 @@ private:
             if (slot.stamp != generation.stamp || slot.key == key) return &slot;
         }
     }
-    static const Slot* lookup(Generation& generation, const Key& key, std::uint64_t key_hash) {
+    static Slot* lookup(Generation& generation, const Key& key, std::uint64_t key_hash) {
         if (generation.entries == 0 || generation.stamp == 0) return nullptr;
-        const auto* slot = probe(generation, key, key_hash);
+        auto* slot = probe(generation, key, key_hash);
         return slot->stamp == generation.stamp ? slot : nullptr;
     }
     // Doubles the table (kept at most half full) and re-inserts live slots.
@@ -650,6 +681,239 @@ private:
     std::array<Generation, 2> generations_;
     std::size_t recording_ = 0, previous_ = 1;
     std::uint32_t stamp_ = 0;
+    std::uint32_t frame_ = 0;
+    // Points of the recording generation's shapes used in the current frame.
+    std::size_t live_points_ = 0;
+};
+
+// Cross-frame memo of the meshes Canvas::line and Canvas::polygon build.
+// Their outline, fringe and interior triangles are pure functions of the
+// exact deduplicated input points, the stroke half width (lines) and the
+// scale, and the validation and tessellation that produce them (simple
+// outline tests, ear clipping, round joins and caps) are quadratic in the
+// outline size, so a mesh that was accepted earlier is reused bit for bit.
+// Only accepted meshes are recorded: invalid polygons and strokes that fall
+// back to coverage rasters take their full path every time. Generations
+// work as in OutlineCache; requests are compared by their exact bits.
+class MeshCache {
+public:
+    static constexpr std::size_t max_entries = detail::mesh_cache_entry_limit;
+    static constexpr std::size_t max_points = detail::mesh_cache_point_limit;
+    static constexpr std::size_t max_indices = detail::mesh_cache_index_limit;
+
+    enum class Kind : std::uint32_t { polygon, line };
+    struct Request {
+        Kind kind = Kind::polygon;
+        std::span<const Vec2> points;
+        float half_width = 0; // lines only
+        float scale = 1;
+    };
+    struct Mesh {
+        std::span<const Vec2> outline;
+        std::span<const Vec2> fringe; // same length as outline
+        std::span<const std::uint32_t> interior;
+    };
+
+    static std::uint64_t hash(const Request& request) {
+        std::uint64_t value = (std::uint64_t{static_cast<std::uint32_t>(request.kind)} << 32) ^
+                              request.points.size();
+        const auto mix = [&value](std::uint64_t word) {
+            value = (value ^ word) * 0x9e3779b97f4a7c15ull;
+            value ^= value >> 32;
+        };
+        mix(std::bit_cast<std::uint32_t>(request.half_width) |
+            (std::uint64_t{std::bit_cast<std::uint32_t>(request.scale)} << 32));
+        for (const auto point : request.points) {
+            mix(std::bit_cast<std::uint64_t>(point));
+        }
+        return value;
+    }
+
+    // Called at the start of each frame; same policy as OutlineCache.
+    void rotate() noexcept {
+        const auto& recording = generations_[recording_];
+        const bool stale = recording.stamp == 0 || recording.refused ||
+                           recording.used_points > 2 * live_points_;
+        live_points_ = 0;
+        ++frame_;
+        if (!stale) {
+            return;
+        }
+        std::swap(recording_, previous_);
+        auto& next = generations_[recording_];
+        next.used_points = next.used_indices = next.entries = 0;
+        next.refused = false;
+        if (++stamp_ == 0) { // after 2^32 rotations: forget every slot explicitly
+            for (auto& generation : generations_) {
+                for (auto& slot : generation.slots) slot.stamp = 0;
+            }
+            generations_[previous_].stamp = 0;
+            stamp_ = 1;
+        }
+        next.stamp = stamp_;
+    }
+
+    // The mesh recorded for `request` in the recording or the previous
+    // generation; one from the previous generation is carried over.
+    std::optional<Mesh> find(const Request& request, std::uint64_t request_hash) {
+        auto& current = generations_[recording_];
+        if (auto* slot = lookup(current, request, request_hash)) {
+            if (slot->frame != frame_) {
+                slot->frame = frame_;
+                live_points_ += slot->key_count + std::size_t{slot->outline_count} * 2;
+            }
+            return view(current, *slot);
+        }
+        auto& previous = generations_[previous_];
+        if (const auto* slot = lookup(previous, request, request_hash)) {
+            const auto mesh = view(previous, *slot);
+            if (const auto carried =
+                    record(request, request_hash, mesh.outline, mesh.fringe, mesh.interior)) {
+                return carried;
+            }
+            return mesh; // stays valid until the next rotate()
+        }
+        return std::nullopt;
+    }
+
+    // Copies an accepted mesh into the recording generation and returns the
+    // stored copy, or nothing beyond the per-generation bounds.
+    std::optional<Mesh> record(const Request& request, std::uint64_t request_hash,
+                               std::span<const Vec2> outline, std::span<const Vec2> fringe,
+                               std::span<const std::uint32_t> interior) {
+        auto& current = generations_[recording_];
+        const auto points = request.points.size() + outline.size() * 2;
+        if (outline.size() != fringe.size()) {
+            return std::nullopt;
+        }
+        if (current.entries >= max_entries || current.used_points + points > max_points ||
+            current.used_indices + interior.size() > max_indices) {
+            current.refused = true;
+            return std::nullopt;
+        }
+        if ((current.entries + 1) * 2 > current.slots.size()) {
+            grow_slots(current);
+        }
+        grow(current.points, current.point_capacity, current.used_points,
+             current.used_points + points, max_points);
+        grow(current.indices, current.index_capacity, current.used_indices,
+             current.used_indices + interior.size(), max_indices);
+        Slot slot;
+        slot.hash = request_hash;
+        slot.kind = static_cast<std::uint32_t>(request.kind);
+        slot.half_width = std::bit_cast<std::uint32_t>(request.half_width);
+        slot.scale = std::bit_cast<std::uint32_t>(request.scale);
+        slot.point_offset = static_cast<std::uint32_t>(current.used_points);
+        slot.key_count = static_cast<std::uint32_t>(request.points.size());
+        slot.outline_count = static_cast<std::uint32_t>(outline.size());
+        slot.index_offset = static_cast<std::uint32_t>(current.used_indices);
+        slot.index_count = static_cast<std::uint32_t>(interior.size());
+        slot.stamp = current.stamp;
+        slot.frame = frame_;
+        Vec2* out = current.points.get() + current.used_points;
+        out = std::copy(request.points.begin(), request.points.end(), out);
+        out = std::copy(outline.begin(), outline.end(), out);
+        std::copy(fringe.begin(), fringe.end(), out);
+        std::copy(interior.begin(), interior.end(), current.indices.get() + current.used_indices);
+        current.used_points += points;
+        current.used_indices += interior.size();
+        auto* stored = probe(current, request, request_hash);
+        *stored = slot;
+        ++current.entries;
+        live_points_ += points;
+        return view(current, *stored);
+    }
+
+private:
+    struct Slot {
+        std::uint64_t hash = 0;
+        std::uint32_t kind = 0, half_width = 0, scale = 0; // request bits
+        // The request's points, then outline_count outline and fringe points.
+        std::uint32_t point_offset = 0, key_count = 0, outline_count = 0;
+        std::uint32_t index_offset = 0, index_count = 0;
+        std::uint32_t stamp = 0; // live while equal to its generation's stamp
+        std::uint32_t frame = 0; // the last frame that used the mesh
+    };
+    struct Generation {
+        std::unique_ptr<Vec2[]> points;
+        std::unique_ptr<std::uint32_t[]> indices;
+        std::size_t point_capacity = 0, used_points = 0;
+        std::size_t index_capacity = 0, used_indices = 0;
+        std::vector<Slot> slots; // open addressing; size is zero or a power of two
+        std::size_t entries = 0;
+        std::uint32_t stamp = 0;
+        bool refused = false; // a mesh did not fit since the generation started
+    };
+
+    static Mesh view(const Generation& generation, const Slot& slot) {
+        const auto* outline = generation.points.get() + slot.point_offset + slot.key_count;
+        return {{outline, slot.outline_count},
+                {outline + slot.outline_count, slot.outline_count},
+                {generation.indices.get() + slot.index_offset, slot.index_count}};
+    }
+    static bool matches(const Generation& generation, const Slot& slot, const Request& request,
+                        std::uint64_t request_hash) {
+        if (slot.hash != request_hash || slot.kind != static_cast<std::uint32_t>(request.kind) ||
+            slot.half_width != std::bit_cast<std::uint32_t>(request.half_width) ||
+            slot.scale != std::bit_cast<std::uint32_t>(request.scale) ||
+            slot.key_count != request.points.size()) {
+            return false;
+        }
+        const auto* key = generation.points.get() + slot.point_offset;
+        return std::equal(request.points.begin(), request.points.end(), key,
+                          [](Vec2 a, Vec2 b) {
+                              return std::bit_cast<std::uint64_t>(a) ==
+                                     std::bit_cast<std::uint64_t>(b);
+                          });
+    }
+    // The live slot holding `request`, or the first free slot of its probe run.
+    static Slot* probe(Generation& generation, const Request& request,
+                       std::uint64_t request_hash) {
+        const auto mask = generation.slots.size() - 1;
+        for (auto index = static_cast<std::size_t>(request_hash) & mask;;
+             index = (index + 1) & mask) {
+            auto& slot = generation.slots[index];
+            if (slot.stamp != generation.stamp || matches(generation, slot, request, request_hash)) {
+                return &slot;
+            }
+        }
+    }
+    static Slot* lookup(Generation& generation, const Request& request,
+                        std::uint64_t request_hash) {
+        if (generation.entries == 0 || generation.stamp == 0) return nullptr;
+        auto* slot = probe(generation, request, request_hash);
+        return slot->stamp == generation.stamp ? slot : nullptr;
+    }
+    // Doubles the table (kept at most half full) and re-inserts live slots,
+    // which are distinct requests: each goes to the first free slot of its run.
+    static void grow_slots(Generation& generation) {
+        std::vector<Slot> slots(std::max<std::size_t>(16, generation.slots.size() * 2));
+        std::swap(slots, generation.slots);
+        const auto mask = generation.slots.size() - 1;
+        for (const auto& slot : slots) {
+            if (slot.stamp != generation.stamp) continue;
+            auto index = static_cast<std::size_t>(slot.hash) & mask;
+            while (generation.slots[index].stamp == generation.stamp) index = (index + 1) & mask;
+            generation.slots[index] = slot;
+        }
+    }
+    template <typename T>
+    static void grow(std::unique_ptr<T[]>& storage, std::size_t& capacity, std::size_t used,
+                     std::size_t needed, std::size_t limit) {
+        if (needed <= capacity) return;
+        const auto next = std::min(limit, std::max({needed, capacity * 2, std::size_t{256}}));
+        auto grown = std::make_unique<T[]>(next);
+        std::copy(storage.get(), storage.get() + used, grown.get());
+        storage = std::move(grown);
+        capacity = next;
+    }
+
+    std::array<Generation, 2> generations_;
+    std::size_t recording_ = 0, previous_ = 1;
+    std::uint32_t stamp_ = 0;
+    std::uint32_t frame_ = 0;
+    // Points of the recording generation's meshes used in the current frame.
+    std::size_t live_points_ = 0;
 };
 
 bool coherent_fringe(std::span<const Vec2> inner, std::span<const Vec2> outer) {
@@ -898,6 +1162,68 @@ std::vector<float> gaussian_kernel(float sigma) {
 
 } // namespace detail
 
+namespace {
+
+// Vertices at `points`, each with uv (0.5, 0.5) and `color`; returns the
+// cursor past them. Four per iteration share the loop overhead, which is
+// otherwise as large as the stores themselves.
+Vertex* put_vertices(Vertex* out, std::span<const Vec2> points, Color color) {
+    const Vertex pattern{{}, {0.5f, 0.5f}, color};
+    const Vec2* point = points.data();
+    const Vec2* const end = point + points.size();
+    for (; end - point >= 4; point += 4, out += 4) {
+        for (std::size_t k = 0; k < 4; ++k) {
+            out[k] = pattern;
+            out[k].position = point[k];
+        }
+    }
+    for (; point != end; ++point, ++out) {
+        *out = pattern;
+        out->position = *point;
+    }
+    return out;
+}
+
+// Index sequences that repeat with a fixed per-lane step, a block at a time:
+// `blocks` copies of `values`, every lane advancing by its `step` between
+// copies. Twelve lanes are three 128-bit vectors kept in registers, so a
+// block costs three additions and three stores instead of recomputing every
+// index (explicitly with SSE2, see simd.hpp, and otherwise as compilers
+// vectorize the lane loops).
+using IndexBlock = std::array<std::uint32_t, 12>;
+std::uint32_t* put_blocks(std::uint32_t* out, const IndexBlock& values, const IndexBlock& step,
+                          std::size_t blocks) {
+#ifdef WUI_PAINT_SSE2
+    const auto load = [](const IndexBlock& lanes, std::size_t at) {
+        return _mm_loadu_si128(reinterpret_cast<const __m128i*>(lanes.data() + at));
+    };
+    __m128i first = load(values, 0), second = load(values, 4), third = load(values, 8);
+    const __m128i first_step = load(step, 0), second_step = load(step, 4),
+                  third_step = load(step, 8);
+    for (std::size_t block = 0; block < blocks; ++block, out += 12) {
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(out), first);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(out + 4), second);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(out + 8), third);
+        first = _mm_add_epi32(first, first_step);
+        second = _mm_add_epi32(second, second_step);
+        third = _mm_add_epi32(third, third_step);
+    }
+#else
+    IndexBlock lanes = values;
+    for (std::size_t block = 0; block < blocks; ++block, out += 12) {
+        for (std::size_t k = 0; k < lanes.size(); ++k) {
+            out[k] = lanes[k];
+        }
+        for (std::size_t k = 0; k < lanes.size(); ++k) {
+            lanes[k] += step[k];
+        }
+    }
+#endif
+    return out;
+}
+
+} // namespace
+
 struct Canvas::Impl {
     explicit Impl(std::shared_ptr<TextureStore> texture_store, std::size_t packet_limit)
         : textures(std::move(texture_store)), max_packet_slots(packet_limit) {
@@ -952,6 +1278,7 @@ struct Canvas::Impl {
         }
         active = false;
         current.reset();
+        vertex_size = index_size = 0;
         clips.clear();
         pending_batches.clear();
         merge_barrier = false;
@@ -972,12 +1299,20 @@ struct Canvas::Impl {
 
     // Shapes write their geometry straight into the retained packet buffers
     // rather than building it in scratch storage and copying it over.
-    // begin_mesh() checks the frame, grows the packet's vertex and index
-    // arrays by exactly the requested counts and returns write cursors into
-    // the new tails; the shape must fill every slot (indices offset by
+    // begin_mesh() checks the frame, makes room for exactly the requested
+    // counts after the frame's vertices and indices and returns write cursors
+    // into that room; the shape must fill every slot (indices offset by
     // `base`) and then call end_mesh() with the final cursors, which records
     // the new index range as a batch or extends the previous one. Writing
     // through cursors avoids a capacity check per element.
+    //
+    // During a frame the packet vectors are retained storage: vertex_size and
+    // index_size are the frame's logical sizes, and the vectors' own sizes
+    // only ever grow, so every element past the logical size is already
+    // constructed and is simply overwritten. A slot reused for a frame no
+    // larger than the one it last published therefore constructs (zeroes)
+    // nothing; only growth beyond that constructs new elements. finish()
+    // trims both vectors to the logical sizes before publishing.
     struct Mesh {
         Vertex* vertex = nullptr;       // next vertex slot to write
         std::uint32_t* index = nullptr; // next index slot to write
@@ -985,52 +1320,59 @@ struct Canvas::Impl {
         std::uint32_t first_index = 0;  // packet index of the mesh's first index
     };
 
+    // Constructed room for `count` elements after the first `used` ones of
+    // `values` (whose size is at least `used`). Only reserve can throw, and
+    // it does so before anything changes; resizing within capacity cannot.
     template <typename T>
-    static void reserve_more(std::vector<T>& values, std::size_t count) {
-        if (values.capacity() - values.size() < count) {
-            // Geometric growth, as insert() would apply, keeps warm-up amortized.
-            values.reserve(values.size() + std::max(values.size(), count));
+    static T* writable(std::vector<T>& values, std::size_t used, std::size_t count) {
+        if (values.size() - used < count) {
+            if (values.capacity() - used < count) {
+                // Geometric growth, as insert() would apply, keeps warm-up amortized.
+                values.reserve(used + std::max(used, count));
+            }
+            values.resize(used + count);
         }
+        return values.data() + used;
     }
 
-    // The frame checks shared by every mesh, then capacity for the given
-    // counts. Returns false, having appended nothing, when the canvas cannot
-    // take paint; reserve is the only step that can throw.
-    bool reserve_mesh(std::size_t vertex_count, std::size_t index_count) {
+    // The frame checks shared by every mesh. False, having appended nothing,
+    // when the canvas cannot take paint or the counts would overflow the
+    // packet's 32-bit index space (which fails the frame).
+    bool mesh_allowed(std::size_t vertex_count, std::size_t index_count) {
         if (!ready() || clips.back().w == 0.0f || clips.back().h == 0.0f) {
             return false;
         }
-        auto& vertices = current->vertices;
-        auto& indices = current->indices;
-        if (vertices.size() > std::numeric_limits<std::uint32_t>::max() - vertex_count ||
-            indices.size() > std::numeric_limits<std::uint32_t>::max() - index_count) {
+        if (vertex_size > std::numeric_limits<std::uint32_t>::max() - vertex_count ||
+            index_size > std::numeric_limits<std::uint32_t>::max() - index_count) {
             fail({ErrorCode::capacity, "Canvas geometry exceeds packet limits"});
             return false;
         }
-        reserve_more(vertices, vertex_count);
-        reserve_more(indices, index_count);
         return true;
     }
 
-    std::optional<Mesh> begin_mesh(std::size_t vertex_count, std::size_t index_count) {
-        if (!reserve_mesh(vertex_count, index_count)) {
-            return std::nullopt;
-        }
-        auto& vertices = current->vertices;
-        auto& indices = current->indices;
-        const auto base = vertices.size();
-        const auto first_index = indices.size();
-        // Within reserved capacity resize cannot throw.
-        vertices.resize(base + vertex_count);
-        indices.resize(first_index + index_count);
-        return Mesh{vertices.data() + base, indices.data() + first_index,
-                    static_cast<std::uint32_t>(base), static_cast<std::uint32_t>(first_index)};
+    // Room for a mesh whose counts mesh_allowed() accepted; the logical sizes
+    // advance only once both buffers have room, so a throwing reserve leaves
+    // the frame unchanged.
+    Mesh claim_mesh(std::size_t vertex_count, std::size_t index_count) {
+        Vertex* const vertex = writable(current->vertices, vertex_size, vertex_count);
+        std::uint32_t* const index = writable(current->indices, index_size, index_count);
+        const Mesh mesh{vertex, index, static_cast<std::uint32_t>(vertex_size),
+                        static_cast<std::uint32_t>(index_size)};
+        vertex_size += vertex_count;
+        index_size += index_count;
+        return mesh;
     }
 
-    // Records indices [first_index, end) as a batch or extends the previous one.
+    std::optional<Mesh> begin_mesh(std::size_t vertex_count, std::size_t index_count) {
+        if (!mesh_allowed(vertex_count, index_count)) {
+            return std::nullopt;
+        }
+        return claim_mesh(vertex_count, index_count);
+    }
+
+    // Records indices [first_index, index_size) as a batch or extends the previous one.
     void end_mesh(std::uint32_t first_index, TextureHandle texture) {
-        const auto index_count =
-            static_cast<std::uint32_t>(current->indices.size() - first_index);
+        const auto index_count = static_cast<std::uint32_t>(index_size - first_index);
         auto& batches = current->batches;
         if (!merge_barrier && !batches.empty() &&
             pending_batches.back().texture == texture &&
@@ -1046,8 +1388,8 @@ struct Canvas::Impl {
 
     // `filled` is the mesh with its cursors advanced past the written slots.
     void end_mesh(const Mesh& filled, TextureHandle texture) {
-        assert(filled.vertex == current->vertices.data() + current->vertices.size() &&
-               filled.index == current->indices.data() + current->indices.size() &&
+        assert(filled.vertex == current->vertices.data() + vertex_size &&
+               filled.index == current->indices.data() + index_size &&
                "a shape must write every vertex and index slot it requested");
         end_mesh(filled.first_index, texture);
     }
@@ -1059,24 +1401,16 @@ struct Canvas::Impl {
         }
     }
 
-    // Two triangles over four corners given in winding order. Meshes this
-    // small are cheaper to push_back (within reserved capacity) than to
-    // resize and fill through cursors.
+    // Two triangles over four corners given in winding order.
     void quad_unchecked(const std::array<Vertex, 4>& corners, TextureHandle texture) {
-        if (!reserve_mesh(4, 6)) {
+        auto mesh = begin_mesh(4, 6);
+        if (!mesh) {
             return;
         }
-        auto& vertices = current->vertices;
-        auto& indices = current->indices;
-        const auto b = static_cast<std::uint32_t>(vertices.size());
-        const auto first_index = static_cast<std::uint32_t>(indices.size());
-        for (const auto& corner : corners) {
-            vertices.push_back(corner);
-        }
-        for (const auto index : {b, b + 1, b + 2, b, b + 2, b + 3}) {
-            indices.push_back(index);
-        }
-        end_mesh(first_index, texture);
+        std::copy(corners.begin(), corners.end(), mesh->vertex);
+        const auto b = mesh->base;
+        put(mesh->index, std::array{b, b + 1, b + 2, b, b + 2, b + 3});
+        end_mesh(mesh->first_index, texture);
     }
 
     void image_unchecked(Rect bounds, TextureHandle texture, Rect uv, Color tint) {
@@ -1089,6 +1423,103 @@ struct Canvas::Impl {
                            Vertex{{bounds.x, bounds.y + bounds.h}, {uv.x, uv.y + uv.h}, color},
                        },
                        texture);
+    }
+
+    // Canvas::image(glyph.bounds moved by offset, glyph.texture, glyph.uv,
+    // tint) for every glyph in order, in one pass: the tint is validated and
+    // premultiplied once, room for every glyph is made once, and each
+    // texture run is recorded with one end_mesh() call. Returns false,
+    // having done nothing, when the run's worst case would overflow the
+    // packet's index space; the caller then takes the per-glyph path, which
+    // fails at exactly the glyph where the overflow happens. The caller does
+    // the same when making room throws, which happens before anything
+    // changes (see CanvasAccess::glyph_run).
+    //
+    // Equivalence with the per-glyph path, which validates the bounds, uv
+    // and tint of each glyph (one shared error), then skips empty glyphs
+    // and empty clips, then appends one quad merged into the previous batch
+    // when the texture, clip and index range allow:
+    //  - an invalid tint fails at the first glyph, like an invalid rect;
+    //  - glyphs are validated in order; the first invalid one fails the
+    //    canvas after the glyphs before it have been appended, and the
+    //    failed canvas ignores the rest;
+    //  - under an empty clip glyphs are still validated but none is drawn;
+    //  - within a run the clip is fixed, the index range is contiguous and
+    //    no merge barrier arises, so consecutive glyphs with equal textures
+    //    land in one batch, which joins the batch before the run exactly
+    //    when the first appended quad would have.
+    // Elements written for the room of glyphs that end up skipped stay
+    // beyond the logical size, as retained storage.
+    bool glyph_run(std::span<const GlyphQuad> glyphs, Vec2 offset, Color tint) {
+        if (!ready() || glyphs.empty()) {
+            return true;
+        }
+        if (!valid_color(tint)) {
+            fail(invalid_argument("Image input must be finite and valid"));
+            return true;
+        }
+        if (clips.back().w == 0.0f || clips.back().h == 0.0f) {
+            for (const auto& glyph : glyphs) {
+                const Rect bounds{glyph.bounds.x + offset.x, glyph.bounds.y + offset.y,
+                                  glyph.bounds.w, glyph.bounds.h};
+                if (!valid_rect(bounds) || !valid_rect(glyph.uv)) {
+                    fail(invalid_argument("Image input must be finite and valid"));
+                    break;
+                }
+            }
+            return true;
+        }
+        constexpr std::size_t limit = std::numeric_limits<std::uint32_t>::max();
+        if (glyphs.size() > (limit - vertex_size) / 4 || limit - index_size < 2 ||
+            glyphs.size() > (limit - index_size - 2) / 6) {
+            return false;
+        }
+        Vertex* const first_vertex =
+            writable(current->vertices, vertex_size, glyphs.size() * 4);
+        std::uint32_t* const first_slot =
+            writable(current->indices, index_size, glyphs.size() * 6 + 2);
+        const auto color = premultiply_valid(tint);
+        Vertex* vertex = first_vertex;
+        std::uint32_t* index = first_slot;
+        // The texture run being written starts at the logical sizes, which
+        // advance as each run is recorded (as they would quad by quad).
+        TextureHandle texture = glyphs.front().texture;
+        const std::size_t vertex_start = vertex_size;
+        const std::size_t index_start = index_size;
+        const auto record_run = [&] {
+            const std::size_t run_end = index_start + static_cast<std::size_t>(index - first_slot);
+            if (run_end != index_size) {
+                const auto run_first = static_cast<std::uint32_t>(index_size);
+                vertex_size = vertex_start + static_cast<std::size_t>(vertex - first_vertex);
+                index_size = run_end;
+                end_mesh(run_first, texture);
+            }
+        };
+        const detail::GlyphCorners corners(offset, color);
+        auto b = static_cast<std::uint32_t>(vertex_size); // the next quad's first vertex
+        bool invalid = false;
+        for (const auto& glyph : glyphs) {
+            const auto verdict = corners(glyph, vertex, index, b);
+            if (verdict != detail::GlyphVerdict::quad) {
+                if (verdict == detail::GlyphVerdict::invalid) {
+                    invalid = true;
+                    break;
+                }
+                continue;
+            }
+            if (!(glyph.texture == texture)) {
+                record_run(); // the glyph's quad is not counted yet
+                texture = glyph.texture;
+            }
+            vertex += 4;
+            index += 6;
+            b += 4;
+        }
+        record_run();
+        if (invalid) {
+            fail(invalid_argument("Image input must be finite and valid"));
+        }
+        return true;
     }
 
     void polygon_unchecked(std::span<const Vec2> points, Color color,
@@ -1109,38 +1540,44 @@ struct Canvas::Impl {
         if (!mesh) {
             return;
         }
-        const auto inner_color = premultiply_valid(color);
-        Vertex* vertex = mesh->vertex;
-        for (const auto point : points) {
-            *vertex++ = {point, {0.5f, 0.5f}, inner_color};
-        }
-        for (const auto point : outer) {
-            *vertex++ = {point, {0.5f, 0.5f}, {0, 0, 0, 0}};
-        }
-        mesh->vertex = vertex;
+        mesh->vertex = put_vertices(mesh->vertex, points, premultiply_valid(color));
+        mesh->vertex = put_vertices(mesh->vertex, outer, {0, 0, 0, 0});
         std::uint32_t* index = mesh->index;
         const auto b = mesh->base;
+        // Whole blocks only: a final partial block writes up to three extra
+        // fan triangles over the start of the fringe ring, or one extra ring
+        // edge over the closing edge's slots, and the writes that follow
+        // (the ring, the closing edge) replace them. Nothing is written past
+        // the mesh.
         if (interior.empty()) {
-            for (std::uint32_t i = 1; i + 1 < count; ++i) {
-                put(index, std::array{b, b + i, b + i + 1});
-            }
+            // Fan triangles (b, b + t, b + t + 1) for t in [1, count - 1),
+            // four per block.
+            put_blocks(index,
+                       {b, b + 1, b + 2, b, b + 2, b + 3, b, b + 3, b + 4, b, b + 4, b + 5},
+                       {0, 4, 4, 0, 4, 4, 0, 4, 4, 0, 4, 4}, (count - 2 + 3) / 4);
+            index += std::size_t{count - 2} * 3;
         } else {
             for (const auto local : interior) {
                 *index++ = b + local;
             }
         }
+        // Two fringe triangles per edge (i, next): (b + i, o + next, b + next)
+        // and (b + i, o + i, o + next). Edges that do not wrap go two per
+        // block; the closing edge (count - 1, 0) comes last.
         const auto o = b + count; // first outer (fringe) vertex
-        for (std::uint32_t i = 0; i < count; ++i) {
-            const auto next = i + 1 == count ? 0 : i + 1;
-            put(index, std::array{b + i, o + next, b + next, b + i, o + i, o + next});
-        }
+        put_blocks(index,
+                   {b, o + 1, b + 1, b, o, o + 1, b + 1, o + 2, b + 2, b + 1, o + 1, o + 2},
+                   {2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2}, (count - 1 + 1) / 2);
+        const auto last = count - 1;
+        index += std::size_t{last} * 6;
+        put(index, std::array{b + last, o, b, b + last, o + last, o});
         mesh->index = index;
         end_mesh(*mesh, *white);
     }
 
     // rounded_outline(bounds, radius, scale) and its fringe_outline, from the
-    // outline cache when an identical shape was drawn this or the last frame.
-    // The spans stay valid until the next call.
+    // outline cache when an identical shape was recorded earlier. The spans
+    // stay valid until the next call.
     OutlineCache::Shape rounded_shape(Rect bounds, float radius) {
         const float scale = current->scale;
         const auto key = OutlineCache::key(bounds, radius, scale);
@@ -1246,6 +1683,7 @@ struct Canvas::Impl {
     bool merge_barrier = false;
     std::vector<std::shared_ptr<PacketData>> slots;
     std::shared_ptr<PacketData> current;
+    std::size_t vertex_size = 0, index_size = 0; // logical sizes of current's buffers
     std::vector<Rect> clips;
     std::vector<PendingBatch> pending_batches;
     std::vector<ShadowEntry> shadows;
@@ -1256,6 +1694,7 @@ struct Canvas::Impl {
     std::vector<Vec2> outline_scratch, fringe_scratch, clean_scratch, direction_scratch,
                       normal_scratch, plus_scratch, minus_scratch;
     OutlineCache outline_cache;
+    MeshCache mesh_cache;
     std::vector<std::uint32_t> remaining_scratch, triangle_scratch;
     // Detached overlay layers: batch descriptors moved out of the main order
     // and appended above it by flush_layers().
@@ -1274,10 +1713,12 @@ void Canvas::begin(Rect viewport, float scale) {
     }
     impl_->frame_error = impl_->construction_error;
     impl_->outline_cache.rotate();
+    impl_->mesh_cache.rotate();
     impl_->pending_batches.clear();
     impl_->clips.clear();
     impl_->merge_barrier = false;
     impl_->current.reset();
+    impl_->vertex_size = impl_->index_size = 0;
     impl_->semantic_count = 0;
     impl_->frame_handles.clear();
     impl_->layer_batches.clear();
@@ -1305,8 +1746,8 @@ void Canvas::begin(Rect viewport, float scale) {
     }
     impl_->current->viewport = viewport;
     impl_->current->scale = scale;
-    impl_->current->vertices.clear();
-    impl_->current->indices.clear();
+    // The vertex and index buffers keep their elements as retained storage
+    // (see Impl::Mesh); vertex_size and index_size start the frame empty.
     impl_->current->batches.clear();
     impl_->current->textures.clear();
     impl_->clips.push_back(viewport);
@@ -1442,37 +1883,39 @@ void Canvas::border(Rect bounds, float radius, float width, Color color) {
     auto mesh = impl_->begin_mesh(std::size_t{count} * 3, std::size_t{count} * 12);
     if (!mesh) return;
     const Color fill = premultiply_valid(color);
-    for (const auto point : outer)
-        *mesh->vertex++ = {point, {0.5f, 0.5f}, fill};
+    mesh->vertex = put_vertices(mesh->vertex, outer, fill);
+    // Each outer point maps into the inner outline from the corner centers of
+    // its quadrant; index 0 is the left (top) side, 1 the right (bottom).
     const float middle_x = bounds.x + bounds.w * 0.5f;
     const float middle_y = bounds.y + bounds.h * 0.5f;
+    const std::array center_x{bounds.x + outer_radius, (bounds.x + bounds.w) + -outer_radius};
+    const std::array center_y{bounds.y + outer_radius, (bounds.y + bounds.h) + -outer_radius};
+    const std::array inner_x{inner.x + inner_radius, (inner.x + inner.w) + -inner_radius};
+    const std::array inner_y{inner.y + inner_radius, (inner.y + inner.h) + -inner_radius};
+    const float ratio = outer_radius > 0 ? inner_radius / outer_radius : 0;
+    const Vertex pattern{{}, {0.5f, 0.5f}, fill};
     for (const auto point : outer) {
-        const bool left = point.x <= middle_x;
-        const bool top = point.y <= middle_y;
-        const float center_x = (left ? bounds.x : bounds.x + bounds.w) +
-                               (left ? outer_radius : -outer_radius);
-        const float center_y = (top ? bounds.y : bounds.y + bounds.h) +
-                               (top ? outer_radius : -outer_radius);
-        const float inner_x = (left ? inner.x : inner.x + inner.w) +
-                              (left ? inner_radius : -inner_radius);
-        const float inner_y = (top ? inner.y : inner.y + inner.h) +
-                              (top ? inner_radius : -inner_radius);
-        const float ratio = outer_radius > 0 ? inner_radius / outer_radius : 0;
-        *mesh->vertex++ = {{inner_x + (point.x - center_x) * ratio,
-                            inner_y + (point.y - center_y) * ratio},
-                           {0.5f, 0.5f}, fill};
+        const std::size_t side_x = point.x <= middle_x ? 0 : 1;
+        const std::size_t side_y = point.y <= middle_y ? 0 : 1;
+        Vertex vertex = pattern;
+        vertex.position = {inner_x[side_x] + (point.x - center_x[side_x]) * ratio,
+                           inner_y[side_y] + (point.y - center_y[side_y]) * ratio};
+        *mesh->vertex++ = vertex;
     }
-    for (const auto point : fringe)
-        *mesh->vertex++ = {point, {0.5f, 0.5f}, {0, 0, 0, 0}};
+    mesh->vertex = put_vertices(mesh->vertex, fringe, {0, 0, 0, 0});
     // Rings of `count` vertices each: outer edge, inner edge, outer fringe.
+    // Each edge (i, next) has a band quad and a fringe quad; edges that do
+    // not wrap advance every index by one, the closing edge comes last.
     const auto o = mesh->base;
     const auto n = o + count;
     const auto f = o + count * 2;
-    for (std::uint32_t i = 0; i < count; ++i) {
-        const auto next = i + 1 == count ? 0 : i + 1;
-        Impl::put(mesh->index, std::array{o + i, o + next, n + next, o + i, n + next, n + i,
-                                          o + i, f + next, o + next,
-                                          o + i, f + i, f + next});
+    if (count > 0) { // rounded outlines always have points; keep the loop's bounds
+        mesh->index = put_blocks(mesh->index,
+                                 {o, o + 1, n + 1, o, n + 1, n, o, f + 1, o + 1, o, f, f + 1},
+                                 {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, count - 1);
+        const auto last = count - 1;
+        Impl::put(mesh->index, std::array{o + last, o, n, o + last, n, n + last,
+                                          o + last, f, o, o + last, f + last, f});
     }
     impl_->end_mesh(*mesh, *impl_->white);
 }
@@ -1509,6 +1952,15 @@ void Canvas::polygon(std::span<const Vec2> points, Color color) {
             impl_->fail({ErrorCode::capacity, "Polygon point limit exceeded"});
             return;
         }
+        // A recorded mesh is one this outline passed validation with before.
+        const MeshCache::Request request{MeshCache::Kind::polygon, clean, 0.0f,
+                                         impl_->current->scale};
+        const auto request_hash = MeshCache::hash(request);
+        if (const auto cached = impl_->mesh_cache.find(request, request_hash)) {
+            if (impl_->clips.back().w == 0.0f || impl_->clips.back().h == 0.0f) return;
+            impl_->polygon_unchecked(cached->outline, color, cached->interior, cached->fringe);
+            return;
+        }
         auto& interior = impl_->triangle_scratch;
         if (!simple_outline(clean) ||
             (triangulate_simple(clean, impl_->remaining_scratch, interior), interior.empty())) {
@@ -1521,6 +1973,12 @@ void Canvas::polygon(std::span<const Vec2> points, Color color) {
         // Sharp concave spikes can fold the offset ring; such outlines keep a
         // hard edge instead of overlapping translucent fringe triangles.
         if (!coherent_fringe(clean, outer)) outer.assign(clean.begin(), clean.end());
+        if (const auto recorded =
+                impl_->mesh_cache.record(request, request_hash, clean, outer, interior)) {
+            impl_->polygon_unchecked(recorded->outline, color, recorded->interior,
+                                     recorded->fringe);
+            return;
+        }
         impl_->polygon_unchecked(clean, color, interior, outer);
     } catch (const std::bad_alloc&) {
         impl_->fail({ErrorCode::capacity, "Polygon allocation failed"});
@@ -1553,6 +2011,14 @@ void Canvas::line(std::span<const Vec2> points, float width, Color color) {
                 clean.push_back(point);
             }
         }
+        // A recorded mesh is the one this exact stroke produced before.
+        const MeshCache::Request request{MeshCache::Kind::line, clean, half,
+                                         impl_->current->scale};
+        const auto request_hash = MeshCache::hash(request);
+        if (const auto cached = impl_->mesh_cache.find(request, request_hash)) {
+            impl_->polygon_unchecked(cached->outline, color, cached->interior, cached->fringe);
+            return;
+        }
         bool mesh_candidate = clean.size() >= 2 && half > epsilon &&
                               finite(half * impl_->current->scale) &&
                               clean.size() <= detail::stroke_mesh_point_limit;
@@ -1581,6 +2047,12 @@ void Canvas::line(std::span<const Vec2> points, float width, Color color) {
                     if (!interior.empty()) {
                         // One connected interior and exterior fringe avoid translucent
                         // overdraw at segment joins and round caps.
+                        if (const auto recorded = impl_->mesh_cache.record(
+                                request, request_hash, outline, outer, interior)) {
+                            impl_->polygon_unchecked(recorded->outline, color,
+                                                     recorded->interior, recorded->fringe);
+                            return;
+                        }
                         impl_->polygon_unchecked(outline, color, interior, outer);
                         return;
                     }
@@ -1723,6 +2195,9 @@ Result<DrawPacket> Canvas::finish() {
     if (impl_->semantic_count < impl_->current->semantics.size()) {
         impl_->current->semantics.resize(impl_->semantic_count);
     }
+    // Shrinking only moves the end of these trivially destructible elements.
+    impl_->current->vertices.resize(impl_->vertex_size);
+    impl_->current->indices.resize(impl_->index_size);
     auto& handles = impl_->frame_handles;
     handles.clear();
     handles.reserve(impl_->pending_batches.size());
@@ -1890,6 +2365,35 @@ void CanvasAccess::end_layer(Canvas& canvas, CanvasLayer layer) {
 void CanvasAccess::flush_layers(Canvas& canvas) {
     auto& impl = *canvas.impl_;
     if (impl.ready()) impl.flush_layers();
+}
+
+void CanvasAccess::glyph_run(Canvas& canvas, std::span<const GlyphQuad> glyphs, Vec2 offset,
+                             Color tint) {
+    auto& impl = *canvas.impl_;
+    const auto index_size = impl.index_size;
+    try {
+        if (impl.glyph_run(glyphs, offset, tint)) {
+            return;
+        }
+    } catch (const std::bad_alloc&) {
+        // The run makes room for all of its glyphs, empty and invalid ones
+        // included, before it changes anything. When that room (or an error
+        // message) cannot be allocated while nothing is recorded yet, the
+        // per-glyph path below starts over from the same state and fails,
+        // or not, exactly where one image per glyph would. Once a texture
+        // run is recorded, the exception comes from adding a batch or from
+        // an error message after recorded quads, where the per-glyph path
+        // throws as well, and it propagates.
+        if (impl.index_size != index_size) {
+            throw;
+        }
+    }
+    for (const auto& glyph : glyphs) {
+        Rect bounds = glyph.bounds;
+        bounds.x += offset.x;
+        bounds.y += offset.y;
+        canvas.image(bounds, glyph.texture, glyph.uv, tint);
+    }
 }
 
 void CanvasAccess::clear_choice_selection(Canvas& canvas, Id id) {

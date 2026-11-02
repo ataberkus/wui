@@ -1,6 +1,9 @@
 #pragma once
 
 #include <wui/canvas.hpp>
+#include <wui/text.hpp>
+
+#include <span>
 
 namespace wui::detail {
 struct PanelMark {
@@ -34,5 +37,9 @@ struct CanvasAccess {
     static CanvasLayer begin_layer(Canvas&, Rect clip);
     static void end_layer(Canvas&, CanvasLayer);
     static void flush_layers(Canvas&);
+    // Same packet and errors as Canvas::image(glyph.bounds moved by offset,
+    // glyph.texture, glyph.uv, tint) for each glyph in order, but the tint is
+    // validated and premultiplied once and room for the run is made once.
+    static void glyph_run(Canvas&, std::span<const GlyphQuad> glyphs, Vec2 offset, Color tint);
 };
 } // namespace wui::detail

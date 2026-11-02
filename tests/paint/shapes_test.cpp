@@ -2,6 +2,8 @@
 
 #include <wui/canvas.hpp>
 
+#include "../../src/paint/canvas_access.hpp"
+#include "../../src/paint/glyph_quad.hpp"
 #include "../../src/paint/shapes_detail.hpp"
 
 #include <algorithm>
@@ -886,4 +888,589 @@ TEST_CASE("rounded shapes recorded only in the previous frame are reused when th
         const auto expected = frame(fresh, sets);
         CHECK(same_geometry(*actual, *expected));
     }
+}
+
+namespace {
+
+bool same_packet(const wui::PacketData& a, const wui::PacketData& b) {
+    const auto same_rect = [](wui::Rect u, wui::Rect v) {
+        return std::bit_cast<std::array<std::uint32_t, 4>>(u) ==
+               std::bit_cast<std::array<std::uint32_t, 4>>(v);
+    };
+    return same_geometry(a, b) &&
+           std::equal(a.batches.begin(), a.batches.end(), b.batches.begin(),
+                      [&](const wui::Batch& u, const wui::Batch& v) {
+                          return u.first_index == v.first_index &&
+                                 u.index_count == v.index_count &&
+                                 u.texture_index == v.texture_index &&
+                                 u.base_vertex == v.base_vertex && same_rect(u.clip, v.clip);
+                      }) &&
+           a.textures.size() == b.textures.size() &&
+           // Each canvas owns its own white texture: compare contents, not handles.
+           std::equal(a.textures.begin(), a.textures.end(), b.textures.begin(),
+                      [](const auto& u, const auto& v) {
+                          return u->width == v->width && u->height == v->height &&
+                                 u->alpha == v->alpha && u->rgba == v->rgba;
+                      });
+}
+
+// Every quad- and mesh-emitting primitive, `copies` times.
+void draw_mixed_scene(wui::Canvas& canvas, wui::TextureHandle texture, int copies) {
+    for (int i = 0; i < copies; ++i) {
+        const float y = static_cast<float>(i) * 7.0f;
+        canvas.rounded_rect({4, y, 60, 20}, 5, {0.2f, 0.3f, 0.4f, 1});
+        canvas.image({70, y, 9, 11}, texture, {0.25f, 0.5f, 0.25f, 0.5f}, {1, 1, 1, 0.75f});
+        canvas.gradient({90, y, 30, 6}, {1, 0, 0, 1}, {0, 0, 1, 0.5f});
+        canvas.border({130, y, 40, 16}, 4, 1.5f, {1, 1, 1, 0.5f});
+        const std::array triangle{wui::Vec2{180, y}, wui::Vec2{200, y + 5}, wui::Vec2{185, y + 9}};
+        canvas.convex(triangle, {0, 1, 0, 1});
+        const std::array path{wui::Vec2{210, y}, wui::Vec2{230, y + 4}, wui::Vec2{250, y}};
+        canvas.line(path, 2, {1, 1, 0, 1});
+    }
+}
+
+} // namespace
+
+TEST_CASE("a reused packet slot publishes exactly the geometry of each frame") {
+    auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
+    const auto texture = create_pixel(*textures, red);
+    wui::Canvas reused(textures, 1);
+    // Growing, shrinking, failed and aborted frames leave retained elements
+    // beyond what the next frame writes; none of them may be published.
+    for (const int copies : {3, 40, 1, -40, 0, -1, 5, 60, 2}) {
+        reused.begin({0, 0, 400, 600}, 1.25f);
+        draw_mixed_scene(reused, texture, copies < 0 ? -copies : copies);
+        if (copies < -1) {
+            reused.image({0, 0, std::numeric_limits<float>::quiet_NaN(), 1}, texture,
+                         {0, 0, 1, 1}, {1, 1, 1, 1});
+            const auto failed = reused.finish();
+            REQUIRE(std::holds_alternative<wui::Error>(failed));
+            CHECK(std::get<wui::Error>(failed).code == wui::ErrorCode::invalid_argument);
+            continue;
+        }
+        if (copies == -1) {
+            wui::detail::CanvasAccess::abort(reused);
+            continue;
+        }
+        const auto actual = packet(reused);
+        CHECK_FALSE(wui::validate_packet(*actual).has_value());
+        wui::Canvas fresh(textures, 1);
+        fresh.begin({0, 0, 400, 600}, 1.25f);
+        draw_mixed_scene(fresh, texture, copies);
+        const auto expected = packet(fresh);
+        CHECK(same_packet(*actual, *expected));
+    }
+}
+
+namespace {
+
+struct GlyphRunCase {
+    std::vector<wui::GlyphQuad> glyphs;
+    wui::Vec2 offset;
+    wui::Color tint{1, 1, 1, 1};
+};
+
+struct GlyphRunOutcome {
+    wui::Status status;
+    wui::DrawPacket packet; // when finish() succeeded
+};
+
+// Paints `before`, the run, then `after`, with either the batched run or one
+// Canvas::image per glyph, and finishes the frame.
+template <typename Before, typename After>
+GlyphRunOutcome paint_glyph_run(const std::shared_ptr<wui::TextureStore>& textures,
+                                const GlyphRunCase& run, bool batched, Before before,
+                                After after) {
+    wui::Canvas canvas(textures, 1);
+    canvas.begin({0, 0, 200, 100}, 1.5f);
+    before(canvas);
+    if (batched) {
+        wui::detail::CanvasAccess::glyph_run(canvas, run.glyphs, run.offset, run.tint);
+    } else {
+        for (const auto& glyph : run.glyphs) {
+            wui::Rect bounds = glyph.bounds;
+            bounds.x += run.offset.x;
+            bounds.y += run.offset.y;
+            canvas.image(bounds, glyph.texture, glyph.uv, run.tint);
+        }
+    }
+    GlyphRunOutcome outcome;
+    outcome.status = wui::detail::CanvasAccess::status(canvas);
+    after(canvas);
+    auto finished = canvas.finish();
+    if (auto* packet = std::get_if<wui::DrawPacket>(&finished)) {
+        outcome.packet = std::move(*packet);
+    } else {
+        CHECK(outcome.status.has_value());
+    }
+    return outcome;
+}
+
+template <typename Before, typename After>
+void check_glyph_run(const std::shared_ptr<wui::TextureStore>& textures, const GlyphRunCase& run,
+                     Before before, After after) {
+    const auto expected = paint_glyph_run(textures, run, false, before, after);
+    const auto actual = paint_glyph_run(textures, run, true, before, after);
+    REQUIRE(actual.status.has_value() == expected.status.has_value());
+    if (expected.status) {
+        CHECK(actual.status->code == expected.status->code);
+        CHECK(actual.status->message == expected.status->message);
+    }
+    REQUIRE(static_cast<bool>(actual.packet) == static_cast<bool>(expected.packet));
+    if (expected.packet) {
+        CHECK_FALSE(wui::validate_packet(*actual.packet).has_value());
+        CHECK(same_packet(*actual.packet, *expected.packet));
+    }
+}
+
+} // namespace
+
+TEST_CASE("a batched glyph run matches one image per glyph") {
+    auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
+    const auto a = create_pixel(*textures, red);
+    const auto b = create_pixel(*textures, blue);
+    const auto nan = std::numeric_limits<float>::quiet_NaN();
+    const auto inf = std::numeric_limits<float>::infinity();
+    const auto glyph = [](wui::TextureHandle texture, float x, float w = 6, float h = 9) {
+        return wui::GlyphQuad{texture, {x, -7.25f, w, h}, {x / 64, 0.125f, w / 64, h / 64}};
+    };
+    const auto nothing = [](wui::Canvas&) {};
+    const auto image_a = [&](wui::Canvas& canvas) {
+        canvas.image({1, 2, 3, 4}, a, {0, 0, 1, 1}, {1, 1, 1, 1});
+    };
+    const auto image_b = [&](wui::Canvas& canvas) {
+        canvas.image({1, 2, 3, 4}, b, {0, 0, 1, 1}, {1, 1, 1, 1});
+    };
+    const auto shapes_after = [&](wui::Canvas& canvas) {
+        canvas.rounded_rect({5, 50, 40, 20}, 4, {0.5f, 0.5f, 0.5f, 1});
+        canvas.image({60, 50, 7, 7}, b, {0, 0, 1, 1}, {1, 1, 1, 0.5f});
+    };
+    const wui::Vec2 offset{10.5f, 20.25f};
+    const wui::Color tint{0.9f, 0.6f, 0.3f, 0.8f};
+
+    SUBCASE("one texture, joined to a preceding image of the same texture") {
+        const GlyphRunCase run{{glyph(a, 0), glyph(a, 7), glyph(a, 14)}, offset, tint};
+        check_glyph_run(textures, run, image_a, shapes_after);
+        check_glyph_run(textures, run, image_b, shapes_after);
+        check_glyph_run(textures, run, nothing, nothing);
+    }
+    SUBCASE("texture changes break batches") {
+        const GlyphRunCase run{{glyph(a, 0), glyph(a, 7), glyph(b, 14), glyph(b, 21),
+                                glyph(a, 28), glyph(b, 35)},
+                               offset, tint};
+        check_glyph_run(textures, run, image_a, shapes_after);
+        check_glyph_run(textures, run, image_b, shapes_after);
+    }
+    SUBCASE("a different clip or a layer keeps the run out of the previous batch") {
+        const GlyphRunCase run{{glyph(a, 0), glyph(a, 7)}, offset, tint};
+        check_glyph_run(textures, run, [&](wui::Canvas& canvas) {
+            image_a(canvas);
+            canvas.push_clip({0, 0, 150, 90});
+        }, [](wui::Canvas& canvas) { canvas.pop_clip(); });
+        wui::detail::CanvasLayer layer;
+        check_glyph_run(textures, run, [&](wui::Canvas& canvas) {
+            image_a(canvas);
+            layer = wui::detail::CanvasAccess::begin_layer(canvas, {0, 0, 120, 80});
+        }, [&](wui::Canvas& canvas) {
+            wui::detail::CanvasAccess::end_layer(canvas, layer);
+            shapes_after(canvas);
+        });
+    }
+    SUBCASE("empty glyphs are skipped wherever they are") {
+        check_glyph_run(textures, {{glyph(b, 0, 0, 9), glyph(a, 7), glyph(a, 14, 6, 0),
+                                    glyph(b, 21, 0, 0), glyph(a, 28), glyph(b, 35, 0)},
+                                   offset, tint},
+                        image_a, shapes_after);
+        check_glyph_run(textures, {{glyph(b, 0, 0, 9), glyph(a, 7, 4, 0)}, offset, tint},
+                        image_a, shapes_after);
+        check_glyph_run(textures, {{glyph(a, 0), glyph(b, 7, 0, 3), glyph(a, 14)}, offset, tint},
+                        image_b, shapes_after);
+    }
+    SUBCASE("an empty run draws nothing") {
+        check_glyph_run(textures, {{}, offset, tint}, image_a, shapes_after);
+        check_glyph_run(textures, {{}, offset, {nan, 0, 0, 1}}, image_a, shapes_after);
+    }
+    SUBCASE("an invalid glyph fails at its position") {
+        for (const auto bad : {wui::GlyphQuad{a, {nan, 0, 6, 9}, {0, 0, 1, 1}},
+                               wui::GlyphQuad{a, {0, 0, -1, 9}, {0, 0, 1, 1}},
+                               wui::GlyphQuad{a, {0, 0, 6, inf}, {0, 0, 1, 1}},
+                               wui::GlyphQuad{a, {3.0e38f, 0, 6, 9}, {0, 0, 1, 1}},
+                               wui::GlyphQuad{a, {0, 0, 6, 9}, {0, nan, 1, 1}},
+                               wui::GlyphQuad{a, {0, 0, 6, 9}, {0, 0, 1, -0.5f}},
+                               wui::GlyphQuad{a, {nan, 0, 0, 0}, {0, 0, 1, 1}}}) {
+            for (std::size_t at = 0; at < 4; ++at) {
+                std::vector<wui::GlyphQuad> glyphs{glyph(a, 0), glyph(b, 7), glyph(b, 14, 0),
+                                                   glyph(a, 21)};
+                glyphs.insert(glyphs.begin() + static_cast<std::ptrdiff_t>(at), bad);
+                check_glyph_run(textures, {glyphs, offset, tint}, image_a, shapes_after);
+                // A later invalid glyph is never reached.
+                glyphs.push_back(wui::GlyphQuad{a, {nan, nan, nan, nan}, {}});
+                check_glyph_run(textures, {glyphs, {3.0e38f, 0}, tint}, image_a, shapes_after);
+                check_glyph_run(textures, {glyphs, offset, tint}, image_a, shapes_after);
+            }
+        }
+    }
+    SUBCASE("an invalid tint fails at the first glyph") {
+        for (const wui::Color bad : {wui::Color{nan, 0, 0, 1}, wui::Color{0, 0, 0, 1.5f},
+                                     wui::Color{0, -0.25f, 0, 1}, wui::Color{0, 0, inf, 1}}) {
+            check_glyph_run(textures, {{glyph(a, 0, 0, 0), glyph(a, 7)}, offset, bad}, image_a,
+                            shapes_after);
+        }
+    }
+    SUBCASE("an empty clip draws nothing but still validates") {
+        const auto hidden = [&](wui::Canvas& canvas) {
+            image_a(canvas);
+            canvas.push_clip({300, 300, 10, 10});
+        };
+        const auto shown = [&](wui::Canvas& canvas) {
+            canvas.pop_clip();
+            shapes_after(canvas);
+        };
+        check_glyph_run(textures, {{glyph(a, 0), glyph(b, 7)}, offset, tint}, hidden, shown);
+        check_glyph_run(textures,
+                        {{glyph(a, 0), wui::GlyphQuad{a, {0, 0, 1, 1}, {nan, 0, 1, 1}}},
+                         offset, tint},
+                        hidden, shown);
+        check_glyph_run(textures, {{glyph(a, 0)}, offset, {0, 0, 0, 2}}, hidden, shown);
+    }
+    SUBCASE("a failed canvas ignores the run") {
+        const auto failing = [&](wui::Canvas& canvas) {
+            image_a(canvas);
+            canvas.rounded_rect({0, 0, 1, 1}, -1, {1, 1, 1, 1});
+        };
+        check_glyph_run(textures, {{glyph(a, 0)}, offset, tint}, failing, shapes_after);
+        check_glyph_run(textures, {{glyph(a, 0)}, offset, {nan, 0, 0, 1}}, failing, shapes_after);
+    }
+}
+
+TEST_CASE("a batched glyph run outside an active frame does nothing") {
+    auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
+    const auto a = create_pixel(*textures, red);
+    wui::Canvas canvas(textures, 1);
+    const std::array glyphs{wui::GlyphQuad{a, {0, 0, 4, 4}, {0, 0, 1, 1}}};
+    wui::detail::CanvasAccess::glyph_run(canvas, glyphs, {}, {1, 1, 1, 1});
+    CHECK_FALSE(wui::detail::CanvasAccess::status(canvas).has_value());
+    canvas.begin({0, 0, 10, 10}, 1);
+    const auto result = packet(canvas);
+    CHECK(result->vertices.empty());
+}
+
+TEST_CASE("convex and border meshes list their triangles in outline order for every size") {
+    auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
+    const auto texture = create_pixel(*textures, red);
+    wui::Canvas canvas(textures, 1);
+    // A leading quad gives every mesh a nonzero base vertex.
+    const auto leading = [&] { canvas.image({0, 0, 1, 1}, texture, {0, 0, 1, 1}, {1, 1, 1, 1}); };
+    // Point counts across every remainder of the blocked index writers.
+    for (std::uint32_t count = 3; count <= 41; ++count) {
+        std::vector<wui::Vec2> points(count);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const float angle = 6.2831853f * static_cast<float>(i) / static_cast<float>(count);
+            points[i] = {50 + 40 * std::cos(angle), 50 + 40 * std::sin(angle)};
+        }
+        canvas.begin({0, 0, 100, 100}, 1.0f);
+        leading();
+        canvas.convex(points, {0.5f, 1, 0, 0.5f});
+        const auto result = packet(canvas);
+        const std::uint32_t b = 4;
+        const std::uint32_t o = b + count;
+        REQUIRE(result->vertices.size() == b + 2 * count);
+        std::vector<std::uint32_t> expected{0, 1, 2, 0, 2, 3};
+        for (std::uint32_t t = 1; t + 1 < count; ++t) {
+            expected.insert(expected.end(), {b, b + t, b + t + 1});
+        }
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const auto next = i + 1 == count ? 0 : i + 1;
+            expected.insert(expected.end(), {b + i, o + next, b + next, b + i, o + i, o + next});
+        }
+        CHECK(result->indices == expected);
+        for (std::uint32_t i = 0; i < 2 * count; ++i) {
+            const auto& vertex = result->vertices[b + i];
+            CHECK(vertex.uv.x == 0.5f);
+            CHECK(vertex.uv.y == 0.5f);
+            CHECK(vertex.premultiplied.a == (i < count ? 0.5f : 0.0f));
+            CHECK(vertex.premultiplied.r == (i < count ? 0.25f : 0.0f));
+            if (i < count) {
+                CHECK(vertex.position.x == points[i].x);
+                CHECK(vertex.position.y == points[i].y);
+            }
+        }
+    }
+    // Borders: outline, inner and fringe rings of `count` vertices each.
+    for (const float radius : {0.0f, 1.0f, 2.5f, 4.0f, 7.0f, 12.0f, 30.0f}) {
+        for (const float scale : {1.0f, 1.25f, 2.0f}) {
+            canvas.begin({0, 0, 100, 100}, scale);
+            leading();
+            canvas.border({10, 10, 70, 60}, radius, 1.5f, {1, 1, 1, 1});
+            const auto result = packet(canvas);
+            const std::uint32_t b = 4;
+            REQUIRE((result->vertices.size() - b) % 3 == 0);
+            const auto count = static_cast<std::uint32_t>((result->vertices.size() - b) / 3);
+            REQUIRE(count >= 4);
+            const std::uint32_t n = b + count;
+            const std::uint32_t f = b + 2 * count;
+            std::vector<std::uint32_t> expected{0, 1, 2, 0, 2, 3};
+            for (std::uint32_t i = 0; i < count; ++i) {
+                const auto next = i + 1 == count ? 0 : i + 1;
+                expected.insert(expected.end(),
+                                {b + i, b + next, n + next, b + i, n + next, n + i,
+                                 b + i, f + next, b + next, b + i, f + i, f + next});
+            }
+            CHECK(result->indices == expected);
+        }
+    }
+}
+
+TEST_CASE("rounded shapes stay exact across steady, churning and returning frames") {
+    auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
+    wui::Canvas reused(textures, 1);
+    // A pool of rounded shapes (squares, circles, capsules, plain corners)
+    // drawn in changing subsets: long steady stretches keep one recording
+    // generation, growing churn makes it stale and starts a new one, and
+    // shapes come back after being absent for many frames.
+    const auto shape = [](std::uint32_t i) {
+        const float x = static_cast<float>(i % 8) * 37.0f + 0.25f * static_cast<float>(i / 8);
+        const float y = static_cast<float>(i / 8) * 29.0f;
+        const float w = 12.0f + static_cast<float>(i % 5) * 7.0f;
+        const float h = (i % 3 == 0) ? w : 10.0f + static_cast<float>(i % 4) * 5.0f;
+        const float radius = (i % 6 == 0) ? 0.0f : (i % 6 == 1) ? w : static_cast<float>(i % 7);
+        return std::pair{wui::Rect{x, y, w, h}, radius};
+    };
+    std::uint32_t seed = 12345;
+    const auto next = [&seed] {
+        seed = seed * 1664525u + 1013904223u;
+        return seed >> 8;
+    };
+    std::vector<std::uint32_t> scene;
+    for (int frame = 0; frame < 160; ++frame) {
+        const int phase = frame / 20;
+        if (phase % 2 == 0 && frame % 20 != 0) {
+            // Steady: the same scene, now and then one shape swapped.
+            if (frame % 7 == 0 && !scene.empty()) scene[next() % scene.size()] = next() % 400;
+        } else {
+            // Churn: mostly new shapes from a wide pool, a few old ones.
+            scene.clear();
+            const std::uint32_t count = 10 + next() % 30;
+            for (std::uint32_t i = 0; i < count; ++i) {
+                scene.push_back(i < 6 ? i : next() % (phase % 4 == 1 ? 400u : 60u));
+            }
+        }
+        const float scale = phase % 3 == 2 ? 1.5f : 1.0f;
+        const auto draw = [&](wui::Canvas& canvas) {
+            canvas.begin({0, 0, 400, 400}, scale);
+            for (const auto index : scene) {
+                const auto [bounds, radius] = shape(index);
+                canvas.rounded_rect(bounds, radius, {0.3f, 0.6f, 0.9f, 1});
+                if (index % 4 == 0) canvas.border(bounds, radius, 1.0f, {1, 1, 1, 0.5f});
+            }
+            return packet(canvas);
+        };
+        const auto actual = draw(reused);
+        wui::Canvas fresh(textures, 1);
+        const auto expected = draw(fresh);
+        REQUIRE(same_packet(*actual, *expected));
+    }
+}
+
+namespace {
+
+// Strokes and polygons of every mesh-cache path: round joins and caps,
+// carets, a concave polygon whose fringe folds (hard edge), a convex
+// chevron, repeats within one frame, and a stroke that falls back to a
+// coverage raster (never recorded).
+void draw_mesh_scene(wui::Canvas& canvas, float offset, float width) {
+    const std::array check{wui::Vec2{10 + offset, 20}, wui::Vec2{14 + offset, 25},
+                           wui::Vec2{24 + offset, 12}};
+    canvas.line(check, width, {1, 1, 1, 1});
+    const std::array caret{wui::Vec2{40, 10 + offset}, wui::Vec2{40, 30 + offset}};
+    canvas.line(caret, 1, {0.9f, 0.9f, 0.9f, 1});
+    const std::array chevron{wui::Vec2{60 + offset, 10}, wui::Vec2{70 + offset, 10},
+                             wui::Vec2{65 + offset, 16}};
+    canvas.polygon(chevron, {0.5f, 0.5f, 0.5f, 1});
+    const std::array spike{wui::Vec2{80, 40}, wui::Vec2{120, 40}, wui::Vec2{100.5f, 41},
+                           wui::Vec2{100, 80}, wui::Vec2{99.5f, 41}};
+    canvas.polygon(spike, {0.2f, 0.7f, 0.3f, 0.75f});
+    const std::array closed{wui::Vec2{10, 60}, wui::Vec2{40, 60 + offset}, wui::Vec2{25, 90},
+                            wui::Vec2{10, 60}};
+    canvas.polygon(closed, {1, 0, 0, 0.5f});
+    const std::array reversal{wui::Vec2{50, 60}, wui::Vec2{70, 60}, wui::Vec2{52, 61}};
+    canvas.line(reversal, 2, {1, 1, 0, 1});
+    canvas.line(check, width, {0, 0, 1, 0.5f}); // repeat, another color
+}
+
+} // namespace
+
+TEST_CASE("line and polygon meshes reused across frames match a fresh tessellation") {
+    auto textures = std::make_shared<wui::TextureStore>(4 * 1024 * 1024);
+    wui::Canvas reused(textures, 1);
+    for (const float scale : {1.0f, 1.25f}) {
+        for (const auto& [offset, width] :
+             {std::pair{0.0f, 2.0f}, std::pair{0.0f, 2.0f}, std::pair{3.5f, 2.0f},
+              std::pair{0.0f, 2.0f}, std::pair{0.0f, 1.5f}, std::pair{3.5f, 2.0f},
+              std::pair{0.0f, 2.0f}, std::pair{-0.0f, 2.0f}}) {
+            reused.begin({0, 0, 200, 120}, scale);
+            draw_mesh_scene(reused, offset, width);
+            const auto actual = packet(reused);
+            wui::Canvas fresh(textures, 1);
+            fresh.begin({0, 0, 200, 120}, scale);
+            draw_mesh_scene(fresh, offset, width);
+            const auto expected = packet(fresh);
+            CHECK(same_packet(*actual, *expected));
+        }
+    }
+}
+
+TEST_CASE("cached polygons keep their validation and clipping behavior") {
+    auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
+    wui::Canvas canvas(textures);
+    const std::array valid{wui::Vec2{10, 10}, wui::Vec2{30, 10}, wui::Vec2{20, 25}};
+    const std::array crossing{wui::Vec2{10, 10}, wui::Vec2{30, 30}, wui::Vec2{30, 10},
+                              wui::Vec2{10, 30}};
+    const std::array caret{wui::Vec2{50, 10}, wui::Vec2{50, 30}};
+    for (int frame = 0; frame < 3; ++frame) {
+        // Recorded or reused: drawn when visible, skipped (without error)
+        // under an empty clip.
+        canvas.begin({0, 0, 100, 100}, 1.0f);
+        canvas.push_clip({200, 200, 5, 5});
+        canvas.polygon(valid, {1, 1, 1, 1});
+        canvas.line(caret, 1, {1, 1, 1, 1});
+        canvas.pop_clip();
+        const auto hidden = packet(canvas);
+        CHECK(hidden->indices.empty());
+
+        canvas.begin({0, 0, 100, 100}, 1.0f);
+        canvas.polygon(valid, {1, 1, 1, 1});
+        canvas.line(caret, 1, {1, 1, 1, 1});
+        const auto shown = packet(canvas);
+        CHECK(shown->indices.size() > 0);
+
+        // Invalid outlines are never recorded and fail every time, visible or not.
+        for (const bool clipped : {false, true}) {
+            canvas.begin({0, 0, 100, 100}, 1.0f);
+            canvas.polygon(valid, {1, 1, 1, 1});
+            if (clipped) canvas.push_clip({200, 200, 5, 5});
+            canvas.polygon(crossing, {1, 1, 1, 1});
+            if (clipped) canvas.pop_clip();
+            const auto failed = canvas.finish();
+            REQUIRE(std::holds_alternative<wui::Error>(failed));
+            CHECK(std::get<wui::Error>(failed).code == wui::ErrorCode::invalid_argument);
+        }
+    }
+}
+
+TEST_CASE("strokes beyond the mesh cache bounds are still drawn every frame") {
+    auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
+    wui::Canvas reused(textures);
+    const std::size_t count = wui::detail::mesh_cache_entry_limit;
+    // Set A alone overflows the entry bound. Frame 1 fills a fresh
+    // generation with set B before A, so A is found in the previous
+    // generation but cannot be carried over; frame 2 meets A in neither.
+    const auto draw = [&](wui::Canvas& canvas, float y, std::size_t extra) {
+        for (std::size_t i = 0; i < count + extra; ++i) {
+            const float x = static_cast<float>(i % 64) * 60.0f;
+            const float top = y + static_cast<float>(i / 64) * 30.0f;
+            const std::array caret{wui::Vec2{x, top}, wui::Vec2{x, top + 10}};
+            canvas.line(caret, 1, {1, 1, 1, 1});
+        }
+    };
+    const auto frame = [&](wui::Canvas& canvas, bool with_b) {
+        canvas.begin({0, 0, 4096, 8192}, 1.0f);
+        if (with_b) draw(canvas, 4096.0f, 0);
+        draw(canvas, 0.0f, 50);
+        return packet(canvas);
+    };
+    for (const bool with_b : {false, true, false, false}) {
+        const auto actual = frame(reused, with_b);
+        wui::Canvas fresh(textures);
+        const auto expected = frame(fresh, with_b);
+        CHECK(same_packet(*actual, *expected));
+    }
+}
+
+namespace {
+
+// Canvas::image's handling of one glyph, written out independently.
+wui::detail::GlyphVerdict reference_glyph(const wui::GlyphQuad& glyph, wui::Vec2 offset,
+                                          wui::Color color, std::array<wui::Vertex, 4>& out,
+                                          std::array<std::uint32_t, 6>& indices,
+                                          std::uint32_t base) {
+    const wui::Rect bounds{glyph.bounds.x + offset.x, glyph.bounds.y + offset.y, glyph.bounds.w,
+                           glyph.bounds.h};
+    const auto valid = [](wui::Rect r) {
+        return std::isfinite(r.x + r.w) && std::isfinite(r.y + r.h) && r.w >= 0 && r.h >= 0;
+    };
+    if (!valid(bounds) || !valid(glyph.uv)) return wui::detail::GlyphVerdict::invalid;
+    if (bounds.w == 0 || bounds.h == 0) return wui::detail::GlyphVerdict::empty;
+    const auto uv = glyph.uv;
+    out[0] = {{bounds.x, bounds.y}, {uv.x, uv.y}, color};
+    out[1] = {{bounds.x + bounds.w, bounds.y}, {uv.x + uv.w, uv.y}, color};
+    out[2] = {{bounds.x + bounds.w, bounds.y + bounds.h}, {uv.x + uv.w, uv.y + uv.h}, color};
+    out[3] = {{bounds.x, bounds.y + bounds.h}, {uv.x, uv.y + uv.h}, color};
+    indices = {base, base + 1, base + 2, base, base + 2, base + 3};
+    return wui::detail::GlyphVerdict::quad;
+}
+
+template <typename Write>
+void check_glyph_corners(Write write, const wui::GlyphQuad& glyph, wui::Vec2 offset,
+                         wui::Color color, std::uint32_t base) {
+    std::array<wui::Vertex, 4> expected{};
+    std::array<std::uint32_t, 6> expected_indices{};
+    const auto verdict = reference_glyph(glyph, offset, color, expected, expected_indices, base);
+    std::array<wui::Vertex, 4> actual{};
+    std::array<std::uint32_t, 8> actual_indices{}; // two slack slots
+    REQUIRE(write(glyph, actual.data(), actual_indices.data(), base) == verdict);
+    if (verdict != wui::detail::GlyphVerdict::quad) return;
+    for (std::size_t i = 0; i < 4; ++i) {
+        CHECK(std::bit_cast<std::array<std::uint32_t, 8>>(actual[i]) ==
+              std::bit_cast<std::array<std::uint32_t, 8>>(expected[i]));
+    }
+    CHECK(std::equal(expected_indices.begin(), expected_indices.end(), actual_indices.begin()));
+}
+
+} // namespace
+
+TEST_CASE("scalar and packed glyph corners match image() for every value class") {
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    const float big = std::numeric_limits<float>::max();
+    const float tiny = std::numeric_limits<float>::denorm_min();
+    const std::array specials{0.0f, -0.0f, 1.0f, -1.0f, 0.5f, 7.25f, -3.75f, 1.0e-30f, tiny,
+                              -tiny, big, -big, 3.0e38f, 1.0e20f, nan, inf, -inf, 0.125f};
+    std::uint32_t seed = 987654321;
+    const auto next = [&seed] {
+        seed = seed * 1664525u + 1013904223u;
+        return seed;
+    };
+    const auto value = [&] {
+        const auto pick = next();
+        if (pick % 4 == 0) return specials[(pick >> 8) % specials.size()];
+        // Mostly ordinary glyph-sized values, both signs, many magnitudes.
+        const float magnitude = static_cast<float>((pick >> 8) % 100000) / 64.0f;
+        return (pick & 0x10) ? -magnitude * 0.01f : magnitude;
+    };
+    // Extents are usually nonnegative, so all three verdicts are common.
+    const auto extent = [&] {
+        const float v = value();
+        return next() % 4 != 0 ? std::abs(v) : v;
+    };
+    const wui::Color color{0.25f, 0.5f, 0.125f, 0.5f};
+    std::array<int, 3> verdicts{};
+    for (int i = 0; i < 20000; ++i) {
+        const wui::GlyphQuad glyph{{next(), next()}, {value(), value(), extent(), extent()},
+                                   {value(), value(), extent(), extent()}};
+        const wui::Vec2 offset{value(), value()};
+        const wui::detail::GlyphCorners corners(offset, color);
+        const auto base = next() >> 4;
+        std::array<wui::Vertex, 4> unused{};
+        std::array<std::uint32_t, 6> unused_indices{};
+        ++verdicts[static_cast<std::size_t>(
+            reference_glyph(glyph, offset, color, unused, unused_indices, base))];
+        check_glyph_corners([&](const auto&... args) { return corners.scalar(args...); }, glyph,
+                            offset, color, base);
+#ifdef WUI_PAINT_SSE2
+        check_glyph_corners([&](const auto&... args) { return corners.packed(args...); }, glyph,
+                            offset, color, base);
+#endif
+    }
+    for (const int count : verdicts) CHECK(count > 500);
 }

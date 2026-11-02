@@ -237,13 +237,9 @@ void FrameState::glyphs(const TextRun& run, Vec2 top_left, Color color) {
     // A per-glyph check never ran for an empty run, so neither does the check
     // below: an earlier unchecked canvas failure is still reported where it was.
     if (run.glyphs.empty()) return;
-    for (const auto& glyph : run.glyphs) {
-        Rect bounds = glyph.bounds;
-        // A6 already includes its baseline in each glyph's y-down bounds.
-        bounds.x += top_left.x;
-        bounds.y += top_left.y;
-        canvas.image(bounds, glyph.texture, glyph.uv, color);
-    }
+    // Canvas::image per glyph at its bounds moved by top_left (A6 already
+    // includes its baseline in each glyph's y-down bounds), batched.
+    CanvasAccess::glyph_run(canvas, run.glyphs, top_left, color);
     // A failed canvas ignores all later paint and keeps its first error, so
     // one check after the run reports exactly what a per-glyph check would.
     check_canvas();
