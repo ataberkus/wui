@@ -2,6 +2,7 @@
 
 #include <wui/canvas.hpp>
 
+#include "../../src/paint/canvas_access.hpp"
 #include "../../src/paint/shapes_detail.hpp"
 
 #include <algorithm>
@@ -885,5 +886,77 @@ TEST_CASE("rounded shapes recorded only in the previous frame are reused when th
         wui::Canvas fresh(textures);
         const auto expected = frame(fresh, sets);
         CHECK(same_geometry(*actual, *expected));
+    }
+}
+
+namespace {
+
+bool same_packet(const wui::PacketData& a, const wui::PacketData& b) {
+    const auto same_rect = [](wui::Rect u, wui::Rect v) {
+        return std::bit_cast<std::array<std::uint32_t, 4>>(u) ==
+               std::bit_cast<std::array<std::uint32_t, 4>>(v);
+    };
+    return same_geometry(a, b) &&
+           std::equal(a.batches.begin(), a.batches.end(), b.batches.begin(),
+                      [&](const wui::Batch& u, const wui::Batch& v) {
+                          return u.first_index == v.first_index &&
+                                 u.index_count == v.index_count &&
+                                 u.texture_index == v.texture_index &&
+                                 u.base_vertex == v.base_vertex && same_rect(u.clip, v.clip);
+                      }) &&
+           a.textures.size() == b.textures.size() &&
+           // Each canvas owns its own white texture: compare contents, not handles.
+           std::equal(a.textures.begin(), a.textures.end(), b.textures.begin(),
+                      [](const auto& u, const auto& v) {
+                          return u->width == v->width && u->height == v->height &&
+                                 u->alpha == v->alpha && u->rgba == v->rgba;
+                      });
+}
+
+// Every quad- and mesh-emitting primitive, `copies` times.
+void draw_mixed_scene(wui::Canvas& canvas, wui::TextureHandle texture, int copies) {
+    for (int i = 0; i < copies; ++i) {
+        const float y = static_cast<float>(i) * 7.0f;
+        canvas.rounded_rect({4, y, 60, 20}, 5, {0.2f, 0.3f, 0.4f, 1});
+        canvas.image({70, y, 9, 11}, texture, {0.25f, 0.5f, 0.25f, 0.5f}, {1, 1, 1, 0.75f});
+        canvas.gradient({90, y, 30, 6}, {1, 0, 0, 1}, {0, 0, 1, 0.5f});
+        canvas.border({130, y, 40, 16}, 4, 1.5f, {1, 1, 1, 0.5f});
+        const std::array triangle{wui::Vec2{180, y}, wui::Vec2{200, y + 5}, wui::Vec2{185, y + 9}};
+        canvas.convex(triangle, {0, 1, 0, 1});
+        const std::array path{wui::Vec2{210, y}, wui::Vec2{230, y + 4}, wui::Vec2{250, y}};
+        canvas.line(path, 2, {1, 1, 0, 1});
+    }
+}
+
+} // namespace
+
+TEST_CASE("a reused packet slot publishes exactly the geometry of each frame") {
+    auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
+    const auto texture = create_pixel(*textures, red);
+    wui::Canvas reused(textures, 1);
+    // Growing, shrinking, failed and aborted frames leave retained elements
+    // beyond what the next frame writes; none of them may be published.
+    for (const int copies : {3, 40, 1, -40, 0, -1, 5, 60, 2}) {
+        reused.begin({0, 0, 400, 600}, 1.25f);
+        draw_mixed_scene(reused, texture, copies < 0 ? -copies : copies);
+        if (copies < -1) {
+            reused.image({0, 0, std::numeric_limits<float>::quiet_NaN(), 1}, texture,
+                         {0, 0, 1, 1}, {1, 1, 1, 1});
+            const auto failed = reused.finish();
+            REQUIRE(std::holds_alternative<wui::Error>(failed));
+            CHECK(std::get<wui::Error>(failed).code == wui::ErrorCode::invalid_argument);
+            continue;
+        }
+        if (copies == -1) {
+            wui::detail::CanvasAccess::abort(reused);
+            continue;
+        }
+        const auto actual = packet(reused);
+        CHECK_FALSE(wui::validate_packet(*actual).has_value());
+        wui::Canvas fresh(textures, 1);
+        fresh.begin({0, 0, 400, 600}, 1.25f);
+        draw_mixed_scene(fresh, texture, copies);
+        const auto expected = packet(fresh);
+        CHECK(same_packet(*actual, *expected));
     }
 }

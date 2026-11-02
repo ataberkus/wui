@@ -952,6 +952,7 @@ struct Canvas::Impl {
         }
         active = false;
         current.reset();
+        vertex_size = index_size = 0;
         clips.clear();
         pending_batches.clear();
         merge_barrier = false;
@@ -972,12 +973,20 @@ struct Canvas::Impl {
 
     // Shapes write their geometry straight into the retained packet buffers
     // rather than building it in scratch storage and copying it over.
-    // begin_mesh() checks the frame, grows the packet's vertex and index
-    // arrays by exactly the requested counts and returns write cursors into
-    // the new tails; the shape must fill every slot (indices offset by
+    // begin_mesh() checks the frame, makes room for exactly the requested
+    // counts after the frame's vertices and indices and returns write cursors
+    // into that room; the shape must fill every slot (indices offset by
     // `base`) and then call end_mesh() with the final cursors, which records
     // the new index range as a batch or extends the previous one. Writing
     // through cursors avoids a capacity check per element.
+    //
+    // During a frame the packet vectors are retained storage: vertex_size and
+    // index_size are the frame's logical sizes, and the vectors' own sizes
+    // only ever grow, so every element past the logical size is already
+    // constructed and is simply overwritten. A slot reused for a frame no
+    // larger than the one it last published therefore constructs (zeroes)
+    // nothing; only growth beyond that constructs new elements. finish()
+    // trims both vectors to the logical sizes before publishing.
     struct Mesh {
         Vertex* vertex = nullptr;       // next vertex slot to write
         std::uint32_t* index = nullptr; // next index slot to write
@@ -985,52 +994,59 @@ struct Canvas::Impl {
         std::uint32_t first_index = 0;  // packet index of the mesh's first index
     };
 
+    // Constructed room for `count` elements after the first `used` ones of
+    // `values` (whose size is at least `used`). Only reserve can throw, and
+    // it does so before anything changes; resizing within capacity cannot.
     template <typename T>
-    static void reserve_more(std::vector<T>& values, std::size_t count) {
-        if (values.capacity() - values.size() < count) {
-            // Geometric growth, as insert() would apply, keeps warm-up amortized.
-            values.reserve(values.size() + std::max(values.size(), count));
+    static T* writable(std::vector<T>& values, std::size_t used, std::size_t count) {
+        if (values.size() - used < count) {
+            if (values.capacity() - used < count) {
+                // Geometric growth, as insert() would apply, keeps warm-up amortized.
+                values.reserve(used + std::max(used, count));
+            }
+            values.resize(used + count);
         }
+        return values.data() + used;
     }
 
-    // The frame checks shared by every mesh, then capacity for the given
-    // counts. Returns false, having appended nothing, when the canvas cannot
-    // take paint; reserve is the only step that can throw.
-    bool reserve_mesh(std::size_t vertex_count, std::size_t index_count) {
+    // The frame checks shared by every mesh. False, having appended nothing,
+    // when the canvas cannot take paint or the counts would overflow the
+    // packet's 32-bit index space (which fails the frame).
+    bool mesh_allowed(std::size_t vertex_count, std::size_t index_count) {
         if (!ready() || clips.back().w == 0.0f || clips.back().h == 0.0f) {
             return false;
         }
-        auto& vertices = current->vertices;
-        auto& indices = current->indices;
-        if (vertices.size() > std::numeric_limits<std::uint32_t>::max() - vertex_count ||
-            indices.size() > std::numeric_limits<std::uint32_t>::max() - index_count) {
+        if (vertex_size > std::numeric_limits<std::uint32_t>::max() - vertex_count ||
+            index_size > std::numeric_limits<std::uint32_t>::max() - index_count) {
             fail({ErrorCode::capacity, "Canvas geometry exceeds packet limits"});
             return false;
         }
-        reserve_more(vertices, vertex_count);
-        reserve_more(indices, index_count);
         return true;
     }
 
-    std::optional<Mesh> begin_mesh(std::size_t vertex_count, std::size_t index_count) {
-        if (!reserve_mesh(vertex_count, index_count)) {
-            return std::nullopt;
-        }
-        auto& vertices = current->vertices;
-        auto& indices = current->indices;
-        const auto base = vertices.size();
-        const auto first_index = indices.size();
-        // Within reserved capacity resize cannot throw.
-        vertices.resize(base + vertex_count);
-        indices.resize(first_index + index_count);
-        return Mesh{vertices.data() + base, indices.data() + first_index,
-                    static_cast<std::uint32_t>(base), static_cast<std::uint32_t>(first_index)};
+    // Room for a mesh whose counts mesh_allowed() accepted; the logical sizes
+    // advance only once both buffers have room, so a throwing reserve leaves
+    // the frame unchanged.
+    Mesh claim_mesh(std::size_t vertex_count, std::size_t index_count) {
+        Vertex* const vertex = writable(current->vertices, vertex_size, vertex_count);
+        std::uint32_t* const index = writable(current->indices, index_size, index_count);
+        const Mesh mesh{vertex, index, static_cast<std::uint32_t>(vertex_size),
+                        static_cast<std::uint32_t>(index_size)};
+        vertex_size += vertex_count;
+        index_size += index_count;
+        return mesh;
     }
 
-    // Records indices [first_index, end) as a batch or extends the previous one.
+    std::optional<Mesh> begin_mesh(std::size_t vertex_count, std::size_t index_count) {
+        if (!mesh_allowed(vertex_count, index_count)) {
+            return std::nullopt;
+        }
+        return claim_mesh(vertex_count, index_count);
+    }
+
+    // Records indices [first_index, index_size) as a batch or extends the previous one.
     void end_mesh(std::uint32_t first_index, TextureHandle texture) {
-        const auto index_count =
-            static_cast<std::uint32_t>(current->indices.size() - first_index);
+        const auto index_count = static_cast<std::uint32_t>(index_size - first_index);
         auto& batches = current->batches;
         if (!merge_barrier && !batches.empty() &&
             pending_batches.back().texture == texture &&
@@ -1046,8 +1062,8 @@ struct Canvas::Impl {
 
     // `filled` is the mesh with its cursors advanced past the written slots.
     void end_mesh(const Mesh& filled, TextureHandle texture) {
-        assert(filled.vertex == current->vertices.data() + current->vertices.size() &&
-               filled.index == current->indices.data() + current->indices.size() &&
+        assert(filled.vertex == current->vertices.data() + vertex_size &&
+               filled.index == current->indices.data() + index_size &&
                "a shape must write every vertex and index slot it requested");
         end_mesh(filled.first_index, texture);
     }
@@ -1059,24 +1075,16 @@ struct Canvas::Impl {
         }
     }
 
-    // Two triangles over four corners given in winding order. Meshes this
-    // small are cheaper to push_back (within reserved capacity) than to
-    // resize and fill through cursors.
+    // Two triangles over four corners given in winding order.
     void quad_unchecked(const std::array<Vertex, 4>& corners, TextureHandle texture) {
-        if (!reserve_mesh(4, 6)) {
+        auto mesh = begin_mesh(4, 6);
+        if (!mesh) {
             return;
         }
-        auto& vertices = current->vertices;
-        auto& indices = current->indices;
-        const auto b = static_cast<std::uint32_t>(vertices.size());
-        const auto first_index = static_cast<std::uint32_t>(indices.size());
-        for (const auto& corner : corners) {
-            vertices.push_back(corner);
-        }
-        for (const auto index : {b, b + 1, b + 2, b, b + 2, b + 3}) {
-            indices.push_back(index);
-        }
-        end_mesh(first_index, texture);
+        std::copy(corners.begin(), corners.end(), mesh->vertex);
+        const auto b = mesh->base;
+        put(mesh->index, std::array{b, b + 1, b + 2, b, b + 2, b + 3});
+        end_mesh(mesh->first_index, texture);
     }
 
     void image_unchecked(Rect bounds, TextureHandle texture, Rect uv, Color tint) {
@@ -1246,6 +1254,7 @@ struct Canvas::Impl {
     bool merge_barrier = false;
     std::vector<std::shared_ptr<PacketData>> slots;
     std::shared_ptr<PacketData> current;
+    std::size_t vertex_size = 0, index_size = 0; // logical sizes of current's buffers
     std::vector<Rect> clips;
     std::vector<PendingBatch> pending_batches;
     std::vector<ShadowEntry> shadows;
@@ -1278,6 +1287,7 @@ void Canvas::begin(Rect viewport, float scale) {
     impl_->clips.clear();
     impl_->merge_barrier = false;
     impl_->current.reset();
+    impl_->vertex_size = impl_->index_size = 0;
     impl_->semantic_count = 0;
     impl_->frame_handles.clear();
     impl_->layer_batches.clear();
@@ -1305,8 +1315,8 @@ void Canvas::begin(Rect viewport, float scale) {
     }
     impl_->current->viewport = viewport;
     impl_->current->scale = scale;
-    impl_->current->vertices.clear();
-    impl_->current->indices.clear();
+    // The vertex and index buffers keep their elements as retained storage
+    // (see Impl::Mesh); vertex_size and index_size start the frame empty.
     impl_->current->batches.clear();
     impl_->current->textures.clear();
     impl_->clips.push_back(viewport);
@@ -1723,6 +1733,9 @@ Result<DrawPacket> Canvas::finish() {
     if (impl_->semantic_count < impl_->current->semantics.size()) {
         impl_->current->semantics.resize(impl_->semantic_count);
     }
+    // Shrinking only moves the end of these trivially destructible elements.
+    impl_->current->vertices.resize(impl_->vertex_size);
+    impl_->current->indices.resize(impl_->index_size);
     auto& handles = impl_->frame_handles;
     handles.clear();
     handles.reserve(impl_->pending_batches.size());
