@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -465,6 +466,72 @@ TEST_CASE("nested rows keep outer cell geometry stable") {
     const auto packet = finish(frame);
     CHECK(semantic(packet, wui::Role::text, "Right").bounds.x == doctest::Approx(48));
     CHECK(semantic(packet, wui::Role::text, "Outer second").bounds.x == doctest::Approx(88));
+}
+
+TEST_CASE("row cells, keyed widgets and positional text keep their established ids") {
+    // The established derivation, spelled with the public child_id: the root
+    // scope is Id{1}; explicit keys live under child_id(scope, "key"); cell i
+    // of a row is child_id(child_id(row, "cell"), <bytes of std::uint64_t{i}>);
+    // positional text n of a scope is child_id(child_id(scope, "text"), <bytes
+    // of std::uint64_t{n}>).
+    const auto keyed = [](wui::Id scope, std::string_view key) {
+        return wui::child_id(wui::child_id(scope, "key"), key);
+    };
+    const auto ordinal = [](wui::Id scope, std::string_view space, std::uint64_t index) {
+        return wui::child_id(wui::child_id(scope, space),
+                             {reinterpret_cast<const char*>(&index), sizeof(index)});
+    };
+    const std::array<wui::Column, 3> columns{{{wui::ColumnKind::share, 1},
+                                              {wui::ColumnKind::share, 1},
+                                              {wui::ColumnKind::share, 1}}};
+    auto context = make_context();
+    auto frame = begin(*context);
+    {
+        auto outer = frame.row("outer", columns);
+        for (int index = 0; index < 3; ++index) {
+            auto cell = outer.cell();
+            frame.text("Text " + std::to_string(index));
+            frame.button("action", "Button " + std::to_string(index));
+            if (index == 2) {
+                auto nested = frame.row("nested", columns);
+                auto first = nested.cell();
+                frame.button("deep", "Nested button");
+            }
+        }
+    }
+    {
+        auto again = frame.row("again", columns);
+        { auto skipped = again.cell(); }
+        auto second = again.cell();
+        frame.button("action", "Second cell of again");
+    }
+    const auto packet = finish(frame);
+    const wui::Id outer = keyed(wui::Id{1}, "outer");
+    std::array<std::uint64_t, 3> buttons{}, texts{};
+    for (std::uint64_t index = 0; index < 3; ++index) {
+        const wui::Id cell = ordinal(outer, "cell", index);
+        const auto suffix = std::to_string(index);
+        buttons[index] = semantic(packet, wui::Role::button, "Button " + suffix).id.value;
+        texts[index] = semantic(packet, wui::Role::text, "Text " + suffix).id.value;
+        CHECK(buttons[index] == keyed(cell, "action").value);
+        CHECK(texts[index] == ordinal(cell, "text", 0).value);
+    }
+    const wui::Id nested = keyed(ordinal(outer, "cell", 2), "nested");
+    CHECK(semantic(packet, wui::Role::button, "Nested button").id ==
+          keyed(ordinal(nested, "cell", 0), "deep"));
+    const wui::Id again = keyed(wui::Id{1}, "again");
+    CHECK(semantic(packet, wui::Role::button, "Second cell of again").id ==
+          keyed(ordinal(again, "cell", 1), "action"));
+    // Literal values pin the bytes hashed for each cell index (little-endian
+    // object representation of the 64-bit index on every supported target).
+    if constexpr (std::endian::native == std::endian::little) {
+        CHECK(buttons[0] == 0xd99b63f0da827b81ULL);
+        CHECK(buttons[1] == 0x688930a128e8a102ULL);
+        CHECK(buttons[2] == 0x3e01981b203cecbaULL);
+        CHECK(texts[0] == 0x726d1a0f882c38fdULL);
+        CHECK(texts[1] == 0x25104d39ad8861f3ULL);
+        CHECK(texts[2] == 0x9e5b66db5f2613bbULL);
+    }
 }
 
 TEST_CASE("nested scroll claims wheel before its parent and paints within its clip") {

@@ -44,7 +44,8 @@ RowScope Frame::row(std::string_view key, std::span<const Column> columns) {
             return RowScope({}, 0, 0);
         }
         const auto row_index = s.rows.size();
-        s.rows.push_back({id, first, std::get<std::size_t>(count), 0, s.stack.size()});
+        s.rows.push_back({id, child_id(id, "cell"), first, std::get<std::size_t>(count), 0,
+                          s.stack.size()});
         return RowScope(state_, generation_, row_index);
     } catch (const std::bad_alloc&) {
         s.report(ErrorCode::capacity, "Row allocation failed");
@@ -88,7 +89,7 @@ CellScope RowScope::cell() {
         }
         auto& row = s.rows[row_index_];
         const std::uint64_t index = row.next;
-        const auto id = child_id(child_id(row.id, "cell"),
+        const auto id = child_id(row.cell_scope,
             {reinterpret_cast<const char*>(&index), sizeof(index)});
         const auto bounds = s.row_rects[row.first + row.next];
         const auto clip = intersect(s.clip(), bounds);
