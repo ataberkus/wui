@@ -2,6 +2,10 @@
 
 #include <wui/input.hpp>
 
+#include <cstdint>
+#include <random>
+#include <unordered_set>
+
 namespace {
 constexpr wui::Id first{1};
 constexpr wui::Id second{2};
@@ -544,5 +548,33 @@ TEST_CASE("duplicate claims are ignored in large frames and ids are reclaimable 
         // A fresh id is still claimed after the duplicates.
         CHECK(input.button({count + 1}, bounds(2005), true).hovered);
         input.end();
+    }
+}
+
+TEST_CASE("id set matches a reference set across generations of clustered ids") {
+    // Ids that share low bits, differ only in high bits, or repeat often stress
+    // the probe sequences; every generation must start empty.
+    wui::detail::IdSet set;
+    std::unordered_set<std::uint64_t> reference;
+    std::mt19937_64 random(20261102);
+    for (int generation = 0; generation < 200; ++generation) {
+        set.clear();
+        reference.clear();
+        const auto count = generation % 25 == 0 ? 5000 : static_cast<int>(random() % 400);
+        for (int i = 0; i < count; ++i) {
+            std::uint64_t id = 0;
+            switch (random() % 4) {
+            case 0: id = 1 + random() % 64; break;
+            case 1: id = (1 + random() % 512) << 55; break;
+            case 2: id = (1 + random() % 4096) * 0x9E3779B97F4A7C15ULL; break;
+            default: id = random() | 1; break;
+            }
+            REQUIRE(set.insert(id) == reference.insert(id).second);
+        }
+        REQUIRE(set.size() == reference.size());
+        REQUIRE(set.capacity() >= set.size());
+        for (const auto id : reference) REQUIRE(set.contains(id));
+        for (std::uint64_t probe = 1; probe <= 128; ++probe)
+            REQUIRE(set.contains(probe) == reference.contains(probe));
     }
 }
