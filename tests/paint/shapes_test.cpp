@@ -390,6 +390,56 @@ TEST_CASE("shadow cache does not evict handles referenced by the active recordin
     CHECK(std::get<wui::Error>(result).code == wui::ErrorCode::capacity);
 }
 
+TEST_CASE("shadow cache does not evict handles referenced by a closed overlay layer") {
+    using wui::detail::CanvasAccess;
+    constexpr wui::Rect viewport{0, 0, 300, 300};
+    auto textures = std::make_shared<wui::TextureStore>(32 * 1024 * 1024);
+    // A shadow inside an overlay layer: end_layer parks the layer's batches
+    // until finish() appends them, and the shadow stays in use meanwhile.
+    bool elevated = false;
+    SUBCASE("a shadow drawn in the layer") {}
+    SUBCASE("the elevated sheet of a panel closed in the layer") { elevated = true; }
+    const auto layered = [&](wui::Canvas& canvas) {
+        canvas.begin(viewport, 1.0f);
+        const auto layer = CanvasAccess::begin_layer(canvas, viewport);
+        if (elevated) {
+            const auto mark = CanvasAccess::open_panel(canvas, {9}, {}, {100, 100, 120, 0}, 8,
+                                                       {0.2f, 0.2f, 0.25f, 1});
+            CanvasAccess::close_panel(canvas, mark, {100, 100, 120, 80}, {108, 108, 104, 64},
+                                      {{0, 0, 0, 0.8f}, 4, 4, {0, 0, 0, 0}});
+        } else {
+            canvas.shadow({100, 104, 120, 80}, 8, 4, {0, 0, 0, 0.8f});
+        }
+        CanvasAccess::end_layer(canvas, layer);
+    };
+    // Newer keys drawn after the layer closed, in the main order.
+    const auto main_shadows = [](wui::Canvas& canvas, std::size_t count) {
+        for (std::size_t i = 0; i < count; ++i) {
+            canvas.shadow({20, 20, 200, 160}, static_cast<float>(i + 1), 0.5f, {0, 0, 0, 0.4f});
+        }
+    };
+    {
+        // Filling the cache exactly evicts nothing; the layer paints last
+        // (an elevated sheet above its shadow).
+        wui::Canvas canvas(textures);
+        layered(canvas);
+        main_shadows(canvas, wui::detail::shadow_cache_capacity - 1);
+        const auto full = packet(canvas);
+        REQUIRE(full->textures.size() == wui::detail::shadow_cache_capacity + (elevated ? 1 : 0));
+        const auto& shadow = full->batches[full->batches.size() - (elevated ? 2 : 1)];
+        CHECK(full->textures[shadow.texture_index]->width > 1);
+    }
+    // One more key finds every entry in use by this frame, the layer's
+    // included: the request reports the full cache instead of releasing the
+    // layer's texture (which made finish() fail with stale_texture).
+    wui::Canvas canvas(textures);
+    layered(canvas);
+    main_shadows(canvas, wui::detail::shadow_cache_capacity);
+    const auto result = canvas.finish();
+    REQUIRE(std::holds_alternative<wui::Error>(result));
+    CHECK(std::get<wui::Error>(result).code == wui::ErrorCode::capacity);
+}
+
 TEST_CASE("shadow validates physical sigma before kernel generation") {
     auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
     wui::Canvas canvas(textures);

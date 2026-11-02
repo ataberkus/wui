@@ -1624,6 +1624,15 @@ struct Canvas::Impl {
         }
     }
 
+    // Whether a batch recorded in this frame draws with `handle`: one in the
+    // main order, or one of a closed overlay layer that end_layer parked in
+    // layer_pending until flush_layers() appends it.
+    bool recorded(TextureHandle handle) const {
+        const auto uses = [handle](const PendingBatch& batch) { return batch.texture == handle; };
+        return std::any_of(pending_batches.begin(), pending_batches.end(), uses) ||
+               std::any_of(layer_pending.begin(), layer_pending.end(), uses);
+    }
+
     Result<ShadowEntry*> shadow_texture(float radius_px, float sigma_px) {
         const ShadowKey key{radius_px, sigma_px};
         for (auto& entry : shadows) {
@@ -1639,12 +1648,7 @@ struct Canvas::Impl {
         if (shadows.size() >= detail::shadow_cache_capacity) {
             auto candidate = shadows.end();
             for (auto it = shadows.begin(); it != shadows.end(); ++it) {
-                const bool recorded = std::any_of(
-                    pending_batches.begin(), pending_batches.end(),
-                    [handle = it->handle](const PendingBatch& batch) {
-                        return batch.texture == handle;
-                    });
-                if (recorded) {
+                if (recorded(it->handle)) {
                     continue;
                 }
                 auto snapshot = textures->snapshot(it->handle);
