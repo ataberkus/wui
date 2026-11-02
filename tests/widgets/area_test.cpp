@@ -51,18 +51,18 @@ void check_rgb(wui::Color actual, wui::Color expected) {
 // Generic popups share the dropdown menu's raised look: a cached shadow (a
 // texture other than the 1x1 white one) in the popup layer's clip, the sheet
 // (control mixed 5% toward text) and, last, a 1px hairline (control mixed 30%
-// toward secondary), both clipped to the popup bounds. Content without paint
-// leaves the three batches adjacent, starting at `first`.
+// toward secondary), both clipped to the popup bounds. The batches start at
+// `first`; `content` batches of popup content lie between sheet and hairline.
 void check_raised_sheet(const wui::DrawPacket& packet, std::size_t first, wui::Rect bounds,
-                        wui::Rect layer_clip) {
-    REQUIRE(first + 3 == packet->batches.size());
+                        wui::Rect layer_clip, std::size_t content = 0) {
+    REQUIRE(first + 3 + content == packet->batches.size());
     const auto theme = wui::Theme::dark();
     const auto mix = [](wui::Color a, wui::Color b, float t) {
         return wui::Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1};
     };
     const auto& shadow = packet->batches[first];
     const auto& sheet = packet->batches[first + 1];
-    const auto& hairline = packet->batches[first + 2];
+    const auto& hairline = packet->batches[first + 2 + content];
     CHECK(packet->textures[shadow.texture_index]->width > 1);
     check_same(shadow.clip, layer_clip);
     check_rgb(vertex(packet, shadow).premultiplied, {0, 0, 0, 0.8f});
@@ -286,6 +286,37 @@ TEST_CASE("modal popups center, swallow outside input and close only on request"
     emit(frame);
     CHECK(under);
     wui::test::finish(frame);
+}
+
+TEST_CASE("raised popup sheets enclose nested panels, also when taller than the viewport") {
+    auto context = wui::test::make_context();
+    for (int i = 0; i < 2; ++i) {
+        auto frame = wui::test::begin(*context, input());
+        if (i == 0) frame.open_popup("tall");
+        if (auto popup = frame.popup("tall", {{0, 0, 100, 30}})) {
+            {
+                auto inner = frame.panel("inner");
+                custom(frame, "row", 20);
+            }
+            custom(frame, "rest", 400);
+        }
+        const auto packet = wui::test::finish(frame);
+        if (i == 0) continue;
+        // Measured 8 + (20 + 2 * 16) + 8 + 400 + 8 = 476: the second frame
+        // clamps the popup to the viewport top and it overflows the bottom.
+        const wui::Semantic* sheet = nullptr;
+        for (const auto& entry : packet->semantics)
+            if (entry.role == wui::Role::panel && entry.bounds.w == doctest::Approx(216)) sheet = &entry;
+        REQUIRE(sheet != nullptr);
+        check_same(sheet->bounds, {0, 0, 216, 476});
+        // Shadow, sheet and hairline follow the full height; sheet and
+        // hairline are clipped to the visible part. The nested panel's flat
+        // background lies between them, clipped to the popup interior.
+        check_raised_sheet(packet, packet->batches.size() - 4, {0, 0, 216, 300}, {0, 0, 400, 300}, 1);
+        const auto& inner = packet->batches[packet->batches.size() - 2];
+        check_same(inner.clip, {8, 8, 200, 292});
+        check_rgb(vertex(packet, inner).premultiplied, wui::Theme::dark().panel);
+    }
 }
 
 TEST_CASE("tooltip_due follows the shared hover delay") {
