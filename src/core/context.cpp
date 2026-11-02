@@ -1,5 +1,6 @@
 #include "context_detail.hpp"
 #include "../layout/flow_detail.hpp"
+#include "id_hash.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -158,13 +159,13 @@ Id FrameState::keyed_id(std::string_view key) {
         return {};
     }
     // Explicit keys and positional text occupy separate ID namespaces.
-    return child_id(child_id(stack.back().id, "key"), key);
+    return hash_child_id(hash_child_id(stack.back().id, "key"), key);
 }
 Id FrameState::text_id() {
     auto& container = stack.back();
     const auto ordinal = container.next_text++;
-    return child_id(child_id(container.id, "text"),
-                    {reinterpret_cast<const char*>(&ordinal), sizeof(ordinal)});
+    return hash_child_id(hash_child_id(container.id, "text"),
+                         {reinterpret_cast<const char*>(&ordinal), sizeof(ordinal)});
 }
 bool FrameState::copy_label(std::string_view label) {
     if (error) return false;

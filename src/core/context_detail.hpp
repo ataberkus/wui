@@ -47,9 +47,10 @@ struct Container {
 };
 struct RowState {
     Id id;
-    // child_id(id, "cell"), hashed once per row: cell i is
-    // child_id(cell_scope, <the eight bytes of std::uint64_t{i}>).
-    Id cell_scope;
+    // id_seed(child_id(id, "cell")), hashed once per row: cell i is
+    // Id{id_append(cell_seed, <the eight bytes of std::uint64_t{i}>)}, which
+    // is child_id(child_id(id, "cell"), <the same bytes>) (see id_hash.hpp).
+    std::uint64_t cell_seed;
     std::size_t first, count, next, parent_depth;
     float tallest = 0;
     bool cell_open = false;
