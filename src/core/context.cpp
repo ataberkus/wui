@@ -27,10 +27,10 @@ FrameState::FrameState(ContextDesc desc)
     : theme(desc.theme), text(std::move(desc.text)), clipboard(std::move(desc.clipboard)),
       canvas(std::move(desc.textures), desc.max_packet_slots),
       max_widgets(desc.max_widgets), max_retained_bytes(desc.max_retained_bytes),
-      memory(max_retained_bytes), widgets(&memory), stack(&memory),
-      row_rects(&memory), rows(&memory), wrap_lines(&memory), style_stack(&memory), areas(&memory),
-      choice_columns(&memory), diagnostics(&memory), overlays(&memory), edits(&memory),
-      grids(&memory) {}
+      memory(max_retained_bytes), widgets(&memory), edits(&memory), grids(&memory),
+      stack(&memory), row_rects(&memory), rows(&memory), wrap_lines(&memory),
+      style_stack(&memory), areas(&memory), choice_columns(&memory), diagnostics(&memory),
+      overlays(&memory) {}
 
 void FrameState::report(ErrorCode code, const char* message, bool contract) noexcept {
     if (error) return;
