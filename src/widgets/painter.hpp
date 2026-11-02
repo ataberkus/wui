@@ -160,6 +160,15 @@ inline float shadow_sigma(const FrameState& frame, float sigma) {
     return std::clamp(sigma, 0.5f / scale, 32.0f / scale);
 }
 
+// Area left inside the bands paint_rings() draws for the same arguments.
+inline Rect ring_inner(Rect bounds, bool focused, bool invalid, bool outlined) {
+    if (focused) {
+        if (std::min(bounds.w, bounds.h) < 12.0f) return inset(bounds, 2.0f);
+        return inset(bounds, invalid ? 5.0f : 3.0f);
+    }
+    if (invalid) return inset(bounds, 2.0f);
+    return outlined ? inset(bounds, 1.0f) : bounds;
+}
 // Rings over an already painted surface, always inside `bounds` (the hit row).
 // Every band is a Canvas::border drawn after the fill: borders keep a hard
 // inner edge, while a stack of inset fills lets each fringe eat half of the
@@ -170,25 +179,21 @@ inline Rect paint_rings(FrameState& frame, Rect bounds, bool focused, bool inval
     auto& canvas = frame.canvas;
     const float radius = theme.control_radius;
     const auto concentric = [radius](float in) { return std::max(0.0f, radius - in); };
+    const bool outlined = outline.a > 0.0f;
     if (focused) {
         if (std::min(bounds.w, bounds.h) < 12.0f) {
             canvas.border(bounds, radius, 2.0f, theme.focus);
-            return inset(bounds, 2.0f);
+        } else {
+            if (invalid) canvas.border(inset(bounds, 3.0f), concentric(3.0f), 2.0f, invalid_ink(theme));
+            canvas.border(inset(bounds, 2.0f), concentric(2.0f), 1.0f, theme.panel); // separator
+            canvas.border(bounds, radius, 2.0f, theme.focus);                       // ring
         }
-        if (invalid) canvas.border(inset(bounds, 3.0f), concentric(3.0f), 2.0f, invalid_ink(theme));
-        canvas.border(inset(bounds, 2.0f), concentric(2.0f), 1.0f, theme.panel); // separator
-        canvas.border(bounds, radius, 2.0f, theme.focus);                       // ring
-        return inset(bounds, invalid ? 5.0f : 3.0f);
-    }
-    if (invalid) {
+    } else if (invalid) {
         canvas.border(bounds, radius, 2.0f, invalid_ink(theme));
-        return inset(bounds, 2.0f);
-    }
-    if (outline.a > 0.0f) {
+    } else if (outlined) {
         canvas.border(bounds, radius, 1.0f, outline);
-        return inset(bounds, 1.0f);
     }
-    return bounds;
+    return ring_inner(bounds, focused, invalid, outlined);
 }
 // Panel-coloured fills are invisible on their container, so they are skipped:
 // quiet buttons, checkbox and radio rows at rest, disabled quiet controls.
