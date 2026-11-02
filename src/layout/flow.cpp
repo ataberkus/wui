@@ -106,26 +106,6 @@ Result<Rect> Flow::take(float height) {
     return invalid_layout("flow dimensions overflow");
 }
 
-namespace detail {
-bool FlowAccess::take(Flow& flow, float height, Rect& out) noexcept {
-    // NaN and negative heights stop here; an infinite one fails the sum test.
-    if (!flow.valid_ || !(height >= 0.0f)) return false;
-
-    const float row_gap = flow.has_rows_ ? flow.gap_ : 0.0f;
-    const float y_offset = flow.used_height_ + row_gap;
-    const float next_used_height = y_offset + height;
-    const float y = flow.area_.y + y_offset;
-    // An IEEE sum is finite only when both operands are, so these two tests
-    // also prove y_offset, y and height finite.
-    if (!std::isfinite(next_used_height) || !std::isfinite(y + height)) return false;
-
-    flow.used_height_ = next_used_height;
-    flow.has_rows_ = true;
-    out = Rect{flow.area_.x, y, flow.area_.w, height};
-    return true;
-}
-} // namespace detail
-
 float Flow::used_height() const {
     return used_height_;
 }

@@ -183,20 +183,16 @@ void FrameState::note_diagnostic(ErrorCode code, std::string_view message) {
     if (error || diagnostics.size() == 64) return;
     diagnostics.push_back({code, std::string(message)});
 }
-Rect FrameState::take(float height) {
+Rect FrameState::refuse_take(float height) {
     if (error) return {};
-    auto& flow = stack.back().flow;
-    Rect row;
-    if (FlowAccess::take(flow, height, row)) return row;
     // A refused take leaves the flow unchanged; the checked call says why.
-    auto result = flow.take(height);
+    auto result = stack.back().flow.take(height);
     if (auto* failed = std::get_if<Error>(&result)) {
         report(failed->code, failed->message.c_str(), true);
         return {};
     }
     return std::get<Rect>(result);
 }
-Rect FrameState::clip() const { return stack.back().clip; }
 std::shared_ptr<const TextRun> FrameState::shape(std::string_view value, FontRole role, float size) {
     if (error) return {};
     // Display text defaults to the heading size; Theme has no separate token.

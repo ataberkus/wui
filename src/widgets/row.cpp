@@ -119,7 +119,8 @@ void FrameState::close_cell(std::uint64_t expected, std::size_t row_index,
         report(ErrorCode::unbalanced_scope, "Cell scopes must close in reverse opening order", true);
         return;
     }
-    rows[row_index].tallest = std::max(rows[row_index].tallest, stack.back().flow.used_height());
+    rows[row_index].tallest = std::max(rows[row_index].tallest,
+                                       FlowAccess::used_height(stack.back().flow));
     canvas.pop_clip();
     stack.pop_back();
     rows[row_index].cell_open = false;

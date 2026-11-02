@@ -2,6 +2,7 @@
 
 #include <wui/context.hpp>
 #include <wui/layout.hpp>
+#include "../layout/flow_detail.hpp"
 #include "../paint/canvas_access.hpp"
 #include <charconv>
 #include <cmath>
@@ -178,8 +179,15 @@ struct FrameState {
     Id text_id();
     bool copy_label(std::string_view);
     void note_choice_error(std::string_view);
-    Rect take(float height);
-    Rect clip() const;
+    // Allocates the next row of the current container's flow; reports a
+    // refused row (or returns {} after an error). Inline healthy path.
+    Rect take(float height) {
+        Rect row;
+        if (!error && FlowAccess::take(stack.back().flow, height, row)) return row;
+        return refuse_take(height);
+    }
+    Rect refuse_take(float height);
+    Rect clip() const { return stack.back().clip; }
     // size <= 0 selects the theme size for the role (display uses heading size).
     std::shared_ptr<const TextRun> shape(std::string_view, FontRole, float size = 0);
     // Folds enclosing disabled style scopes into the caller's options.
