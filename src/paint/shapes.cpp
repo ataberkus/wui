@@ -486,6 +486,169 @@ void fringe_outline(std::span<const Vec2> points, float fringe, std::vector<Vec2
     }
 }
 
+// Cross-frame memo of rounded outlines and their antialiasing fringes.
+// rounded_outline and fringe_outline are pure functions of the exact
+// bounds, radius and scale, and immediate-mode UIs repaint mostly the same
+// rectangles every frame, so a shape recorded during the previous frame is
+// reused bit for bit instead of being tessellated again. Two generations
+// alternate: lookups see the previous frame's entries and this frame's,
+// and every shape used this frame is (re)recorded into the current
+// generation, whose storage is reused from two frames ago. Storage grows
+// only when a frame records more than any earlier frame in that generation
+// (warm-up); beyond the per-frame bounds in shapes_detail.hpp shapes are
+// simply not recorded and are tessellated every time. Storage is at most
+// 8 MiB of points and 2.4 MiB of slots per generation.
+class OutlineCache {
+public:
+    static constexpr std::size_t max_entries = detail::outline_cache_entry_limit;
+    static constexpr std::size_t max_points = detail::outline_cache_point_limit; // outline + fringe
+
+    struct Key {
+        std::array<std::uint32_t, 6> bits{};
+        bool operator==(const Key&) const = default;
+    };
+    struct Shape {
+        std::span<const Vec2> outline;
+        std::span<const Vec2> fringe; // same length as outline
+    };
+
+    static Key key(Rect bounds, float radius, float scale) {
+        // Exact bits: equal keys mean identical tessellation inputs.
+        return {{std::bit_cast<std::uint32_t>(bounds.x), std::bit_cast<std::uint32_t>(bounds.y),
+                 std::bit_cast<std::uint32_t>(bounds.w), std::bit_cast<std::uint32_t>(bounds.h),
+                 std::bit_cast<std::uint32_t>(radius), std::bit_cast<std::uint32_t>(scale)}};
+    }
+    static std::uint64_t hash(const Key& key) {
+        std::uint64_t value = 0;
+        for (std::size_t i = 0; i < key.bits.size(); i += 2) {
+            const auto word = key.bits[i] | (std::uint64_t{key.bits[i + 1]} << 32);
+            value = (value ^ word) * 0x9e3779b97f4a7c15ull;
+            value ^= value >> 32;
+        }
+        return value;
+    }
+
+    // Called at the start of each frame.
+    void rotate() noexcept {
+        std::swap(recording_, previous_);
+        auto& next = generations_[recording_];
+        next.used = 0;
+        next.entries = 0;
+        if (++stamp_ == 0) { // after 2^32 frames: forget every slot explicitly
+            for (auto& generation : generations_) {
+                for (auto& slot : generation.slots) slot.stamp = 0;
+            }
+            generations_[previous_].stamp = 0;
+            stamp_ = 1;
+        }
+        next.stamp = stamp_;
+    }
+
+    // The shape recorded for `key` this frame or the previous one. A
+    // previous-frame shape is carried into the current generation (when
+    // within bounds) so that it stays available to the next frame.
+    std::optional<Shape> find(const Key& key, std::uint64_t key_hash) {
+        auto& current = generations_[recording_];
+        if (const auto* slot = lookup(current, key, key_hash)) {
+            return view(current, *slot);
+        }
+        auto& previous = generations_[previous_];
+        if (const auto* slot = lookup(previous, key, key_hash)) {
+            const auto shape = view(previous, *slot);
+            if (const auto carried = record(key, key_hash, shape.outline, shape.fringe)) {
+                return carried;
+            }
+            return shape; // stays valid until the next rotate()
+        }
+        return std::nullopt;
+    }
+
+    // Copies a freshly tessellated shape into the current generation and
+    // returns the stored copy, or nothing beyond the per-frame bounds.
+    std::optional<Shape> record(const Key& key, std::uint64_t key_hash,
+                                std::span<const Vec2> outline, std::span<const Vec2> fringe) {
+        auto& current = generations_[recording_];
+        const auto needed = outline.size() * 2;
+        if (outline.size() != fringe.size() || current.entries >= max_entries ||
+            current.used + needed > max_points) {
+            return std::nullopt;
+        }
+        if ((current.entries + 1) * 2 > current.slots.size()) {
+            grow_slots(current);
+        }
+        if (current.used + needed > current.capacity) {
+            grow_points(current, current.used + needed);
+        }
+        const auto offset = current.used;
+        std::copy(fringe.begin(), fringe.end(),
+                  std::copy(outline.begin(), outline.end(), current.points.get() + offset));
+        current.used += needed;
+        auto* slot = probe(current, key, key_hash);
+        *slot = {key, static_cast<std::uint32_t>(offset),
+                 static_cast<std::uint32_t>(outline.size()), current.stamp};
+        ++current.entries;
+        return view(current, *slot);
+    }
+
+private:
+    struct Slot {
+        Key key;
+        std::uint32_t offset = 0, count = 0; // count outline points, then as many fringe points
+        std::uint32_t stamp = 0;             // live while equal to its generation's stamp
+    };
+    struct Generation {
+        // Raw storage rather than a vector: appending is a plain copy, with
+        // no per-append construction of Vec2's default member initializers.
+        std::unique_ptr<Vec2[]> points;
+        std::size_t capacity = 0, used = 0;
+        std::vector<Slot> slots; // open addressing; size is zero or a power of two
+        std::size_t entries = 0;
+        std::uint32_t stamp = 0;
+    };
+
+    static Shape view(const Generation& generation, const Slot& slot) {
+        const auto* first = generation.points.get() + slot.offset;
+        return {{first, slot.count}, {first + slot.count, slot.count}};
+    }
+    // The live slot holding `key`, or the first free slot of its probe run.
+    static Slot* probe(Generation& generation, const Key& key, std::uint64_t key_hash) {
+        const auto mask = generation.slots.size() - 1;
+        for (auto index = static_cast<std::size_t>(key_hash) & mask;;
+             index = (index + 1) & mask) {
+            auto& slot = generation.slots[index];
+            if (slot.stamp != generation.stamp || slot.key == key) return &slot;
+        }
+    }
+    static const Slot* lookup(Generation& generation, const Key& key, std::uint64_t key_hash) {
+        if (generation.entries == 0 || generation.stamp == 0) return nullptr;
+        const auto* slot = probe(generation, key, key_hash);
+        return slot->stamp == generation.stamp ? slot : nullptr;
+    }
+    // Doubles the table (kept at most half full) and re-inserts live slots.
+    static void grow_slots(Generation& generation) {
+        std::vector<Slot> slots(std::max<std::size_t>(64, generation.slots.size() * 2));
+        std::swap(slots, generation.slots);
+        for (const auto& slot : slots) {
+            if (slot.stamp == generation.stamp) {
+                *probe(generation, slot.key, hash(slot.key)) = slot;
+            }
+        }
+    }
+    static void grow_points(Generation& generation, std::size_t needed) {
+        const auto capacity =
+            std::min(max_points, std::max({needed, generation.capacity * 2, std::size_t{1024}}));
+        auto points = std::make_unique<Vec2[]>(capacity);
+        std::copy(generation.points.get(), generation.points.get() + generation.used,
+                  points.get());
+        generation.points = std::move(points);
+        generation.capacity = capacity;
+    }
+
+    std::array<Generation, 2> generations_;
+    std::size_t recording_ = 0, previous_ = 1;
+    std::uint32_t stamp_ = 0;
+};
+
 bool coherent_fringe(std::span<const Vec2> inner, std::span<const Vec2> outer) {
     if (!simple_outline(outer)) {
         return false;
@@ -972,6 +1135,25 @@ struct Canvas::Impl {
         end_mesh(*mesh, *white);
     }
 
+    // rounded_outline(bounds, radius, scale) and its fringe_outline, from the
+    // outline cache when an identical shape was drawn this or the last frame.
+    // The spans stay valid until the next call.
+    OutlineCache::Shape rounded_shape(Rect bounds, float radius) {
+        const float scale = current->scale;
+        const auto key = OutlineCache::key(bounds, radius, scale);
+        const auto key_hash = OutlineCache::hash(key);
+        if (const auto cached = outline_cache.find(key, key_hash)) {
+            return *cached;
+        }
+        rounded_outline(bounds, radius, scale, outline_scratch);
+        fringe_outline(outline_scratch, 1.0f / scale, fringe_scratch);
+        if (const auto recorded =
+                outline_cache.record(key, key_hash, outline_scratch, fringe_scratch)) {
+            return *recorded;
+        }
+        return {outline_scratch, fringe_scratch};
+    }
+
     void stroke_coverage(std::span<const Vec2> points, float width, Color color) {
         try {
             auto raster = raster_stroke(points, width, current->scale, clips.back());
@@ -1070,6 +1252,7 @@ struct Canvas::Impl {
     std::vector<TextureHandle> frame_handles;
     std::vector<Vec2> outline_scratch, fringe_scratch, clean_scratch, direction_scratch,
                       normal_scratch, plus_scratch, minus_scratch;
+    OutlineCache outline_cache;
     std::vector<std::uint32_t> remaining_scratch, triangle_scratch;
     // Detached overlay layers: batch descriptors moved out of the main order
     // and appended above it by flush_layers().
@@ -1087,6 +1270,7 @@ void Canvas::begin(Rect viewport, float scale) {
         return;
     }
     impl_->frame_error = impl_->construction_error;
+    impl_->outline_cache.rotate();
     impl_->pending_batches.clear();
     impl_->clips.clear();
     impl_->merge_barrier = false;
@@ -1164,8 +1348,11 @@ void Canvas::rounded_rect(Rect bounds, float radius, Color color) {
     if (bounds.w == 0.0f || bounds.h == 0.0f) {
         return;
     }
-    rounded_outline(bounds, radius, impl_->current->scale, impl_->outline_scratch);
-    impl_->polygon_unchecked(impl_->outline_scratch, color);
+    if (impl_->clips.back().w == 0.0f || impl_->clips.back().h == 0.0f) {
+        return; // polygon_unchecked would draw nothing either
+    }
+    const auto shape = impl_->rounded_shape(bounds, radius);
+    impl_->polygon_unchecked(shape.outline, color, {}, shape.fringe);
 }
 void Canvas::gradient(Rect bounds, Color top, Color bottom) {
     if (!impl_->ready()) return;
@@ -1242,10 +1429,12 @@ void Canvas::border(Rect bounds, float radius, float width, Color color) {
     const Rect inner{bounds.x + width, bounds.y + width,
                      bounds.w - width * 2, bounds.h - width * 2};
     const float inner_radius = std::max(0.0f, outer_radius - width);
-    auto& outer = impl_->outline_scratch;
-    auto& fringe = impl_->fringe_scratch;
-    rounded_outline(bounds, outer_radius, impl_->current->scale, outer);
-    fringe_outline(outer, 1.0f / impl_->current->scale, fringe);
+    if (impl_->clips.back().w == 0.0f || impl_->clips.back().h == 0.0f) {
+        return; // begin_mesh would refuse the mesh either way
+    }
+    const auto shape = impl_->rounded_shape(bounds, outer_radius);
+    const auto outer = shape.outline;
+    const auto fringe = shape.fringe;
     const auto count = static_cast<std::uint32_t>(outer.size());
     auto mesh = impl_->begin_mesh(std::size_t{count} * 3, std::size_t{count} * 12);
     if (!mesh) return;

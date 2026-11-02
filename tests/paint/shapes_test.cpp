@@ -6,7 +6,9 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <cstddef>
 #include <limits>
 #include <memory>
@@ -777,6 +779,75 @@ TEST_CASE("gradient vertices encode premultiplied endpoints and border leaves a 
             CHECK(vertex.position.x <= 40);
             CHECK(vertex.position.y >= 40);
             CHECK(vertex.position.y <= 60);
+        }
+    }
+}
+
+namespace {
+
+bool same_geometry(const wui::PacketData& a, const wui::PacketData& b) {
+    return a.vertices.size() == b.vertices.size() && a.indices == b.indices &&
+           a.batches.size() == b.batches.size() &&
+           std::equal(a.vertices.begin(), a.vertices.end(), b.vertices.begin(),
+                      [](const wui::Vertex& u, const wui::Vertex& v) {
+                          return std::bit_cast<std::array<std::uint32_t, 8>>(u) ==
+                                 std::bit_cast<std::array<std::uint32_t, 8>>(v);
+                      });
+}
+
+void draw_rounded_scene(wui::Canvas& canvas, float offset) {
+    canvas.rounded_rect({10 + offset, 10, 120, 32}, 6, {0.2f, 0.3f, 0.4f, 1});
+    canvas.rounded_rect({10 + offset, 50, 40, 40}, 20, {1, 1, 1, 0.5f}); // circle
+    canvas.rounded_rect({60 + offset, 50, 90, 24}, 12, {1, 0, 0, 1});    // capsule
+    canvas.rounded_rect({10 + offset, 100, 30, 30}, 0, {0, 1, 0, 1});    // square corners
+    canvas.border({50 + offset, 100, 80, 40}, 8, 2, {0, 0, 1, 1});
+    canvas.rounded_rect({10 + offset, 10, 120, 32}, 6, {0.5f, 0.5f, 0.5f, 1}); // repeat
+}
+
+} // namespace
+
+TEST_CASE("rounded shapes reused from earlier frames match a fresh tessellation") {
+    auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
+    wui::Canvas reused(textures);
+    // Repeats, moves and returns exercise hits in the current and previous
+    // frame's records as well as misses.
+    for (const float scale : {1.0f, 1.5f}) {
+        for (const float offset : {0.0f, 0.0f, 3.5f, 0.0f, 3.5f, 3.5f, 7.25f, 0.0f}) {
+            reused.begin({0, 0, 300, 200}, scale);
+            draw_rounded_scene(reused, offset);
+            const auto actual = packet(reused);
+            wui::Canvas fresh(textures);
+            fresh.begin({0, 0, 300, 200}, scale);
+            draw_rounded_scene(fresh, offset);
+            const auto expected = packet(fresh);
+            CHECK(same_geometry(*actual, *expected));
+        }
+    }
+}
+
+TEST_CASE("rounded shapes beyond the outline cache bounds are still drawn every frame") {
+    auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
+    wui::Canvas canvas(textures);
+    // Square-cornered shapes are small, so the entry bound is reached first.
+    const std::size_t count = wui::detail::outline_cache_entry_limit + 300;
+    REQUIRE(count * 8 < wui::detail::outline_cache_point_limit);
+    wui::DrawPacket first;
+    for (int frame = 0; frame < 3; ++frame) {
+        canvas.begin({0, 0, 4096, 4096}, 1.0f);
+        for (std::size_t i = 0; i < count; ++i) {
+            canvas.rounded_rect({static_cast<float>(i % 200) * 20.0f,
+                                 static_cast<float>(i / 200) * 20.0f, 10, 10},
+                                0, {1, 1, 1, 1});
+        }
+        auto result = packet(canvas);
+        // Four outline and four fringe vertices; two interior triangles and
+        // two per fringe edge.
+        REQUIRE(result->vertices.size() == count * 8);
+        REQUIRE(result->indices.size() == count * 30);
+        if (frame == 0) {
+            first = std::move(result);
+        } else {
+            CHECK(same_geometry(*result, *first));
         }
     }
 }
