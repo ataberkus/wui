@@ -843,6 +843,113 @@ TEST_CASE("a hidden text input keeps its caret until its widget expires") {
     CHECK(value == "XoneY");
 }
 
+namespace {
+enum class EditorKind { text_input, text_area, numeric_input };
+constexpr std::array<EditorKind, 3> editor_kinds{
+    EditorKind::text_input, EditorKind::text_area, EditorKind::numeric_input};
+const char* editor_name(EditorKind kind) {
+    switch (kind) {
+    case EditorKind::text_input: return "text_input";
+    case EditorKind::text_area: return "text_area";
+    default: return "numeric_input";
+    }
+}
+wui::InputEvent control_key(wui::Key key) {
+    auto event = key_event(wui::EventKind::key_down, key);
+    event.control = true;
+    return event;
+}
+// One editor of the given kind with a two-byte label, driven one frame per
+// step. `draft` is the editor's displayed value after the last finished frame.
+struct EditorRig {
+    explicit EditorRig(EditorKind editor) : kind(editor) {}
+    EditorKind kind;
+    std::unique_ptr<wui::Context> context = make_context();
+    std::string text;
+    double number = 0;
+    std::string draft;
+    // Runs one frame; true when it finished with a packet.
+    bool step(std::vector<wui::InputEvent> events) {
+        wui::FrameInput input{{0, 0, 400, 300}};
+        input.events = std::move(events);
+        auto frame = begin(*context, input);
+        auto role = wui::Role::text_input;
+        if (kind == EditorKind::text_input) {
+            frame.text_input("field", "Ed", text);
+        } else if (kind == EditorKind::text_area) {
+            role = wui::Role::text_area;
+            frame.text_area("field", "Ed", text, 120);
+        } else {
+            role = wui::Role::numeric_input;
+            frame.numeric_input("field", "Ed", number, -1e308, 1e308);
+        }
+        auto result = frame.finish();
+        if (!std::holds_alternative<wui::DrawPacket>(result)) return false;
+        draft = semantic(std::get<wui::DrawPacket>(result), role, "Ed").value;
+        return true;
+    }
+    void focus() {
+        REQUIRE(step({}));
+        REQUIRE(step({key_event(wui::EventKind::key_down, wui::Key::tab)}));
+        REQUIRE(context->statistics().focused != wui::Id{});
+    }
+};
+}
+
+TEST_CASE("an edit after undo in the same frame applies in every editor") {
+    // Each typed character is its own frame and undo step; undo then
+    // restores a step recorded in an earlier frame, longer than the label.
+    for (const auto kind : editor_kinds) {
+        const std::string name = editor_name(kind);
+        CAPTURE(name);
+        EditorRig rig(kind);
+        rig.number = 1;
+        rig.focus();
+        const std::string digit = kind == EditorKind::numeric_input ? "1" : "a";
+        for (int i = 0; i < 8; ++i) REQUIRE(rig.step({typed(digit)}));
+        const std::string before = rig.draft;
+        REQUIRE(before.size() >= 8);
+        const std::string last = kind == EditorKind::numeric_input ? "2" : "x";
+        CHECK(rig.step({undo_key(), typed(last)}));
+        CHECK(rig.draft == before.substr(0, before.size() - 1) + last);
+        if (kind == EditorKind::numeric_input) {
+            CHECK(rig.step({key_event(wui::EventKind::key_down, wui::Key::enter)}));
+            CHECK(rig.number == 111111112.0);
+        } else {
+            CHECK(rig.text == rig.draft);
+        }
+        // A later frame keeps editing normally.
+        CHECK(rig.step({typed(last)}));
+        CHECK(rig.draft.back() == last.back());
+    }
+}
+
+TEST_CASE("an edit after an undo step is evicted in the same frame applies in every editor") {
+    for (const auto kind : editor_kinds) {
+        const std::string name = editor_name(kind);
+        CAPTURE(name);
+        EditorRig rig(kind);
+        rig.text = std::string(1000, 'q');
+        rig.number = -1.2345678901234567e+300;
+        rig.focus();
+        // The oldest undo step holds the long value; 63 short steps, one per
+        // frame, fill the 64-step history while the draft stays short.
+        REQUIRE(rig.step({control_key(wui::Key::a),
+                          key_event(wui::EventKind::key_down, wui::Key::backspace)}));
+        REQUIRE(rig.draft.empty());
+        for (int i = 0; i < 63; ++i) {
+            REQUIRE(rig.step({i % 2 == 0 ? typed("1")
+                                         : key_event(wui::EventKind::key_down, wui::Key::backspace)}));
+        }
+        REQUIRE(rig.draft == "1");
+        // The first edit evicts the long step; the second must still apply.
+        CHECK(rig.step({typed("2"), typed("3")}));
+        CHECK(rig.draft == "123");
+        CHECK(rig.step({undo_key()}));
+        CHECK(rig.draft == "12");
+    }
+}
+
 TEST_CASE("data grid column widths expire with the grid after 120 absent completed frames") {
     auto context = make_context();
     const std::array<wui::GridColumn, 2> columns{{{"A", 120}, {"B", 120}}};
