@@ -165,8 +165,10 @@ AreaScope Frame::popup(std::string_view key, PopupOptions options) {
         const auto layer = detail::CanvasAccess::begin_layer(s.canvas, vp);
         if (!s.check_canvas()) return {};
         if (options.modal) s.canvas.rounded_rect(vp, 0, Color{0, 0, 0, 0.45f});
-        const auto mark = detail::CanvasAccess::open_panel(s.canvas, id, {}, bounds,
-                                                           theme.control_radius, theme.panel);
+        // Raised sheet like the dropdown menu; close_area adds its shadow and
+        // hairline for the height measured at close.
+        const auto mark = detail::CanvasAccess::open_panel(
+            s.canvas, id, {}, bounds, theme.control_radius, detail::raised_fill(theme));
         if (!s.check_canvas()) return {};
         const float inset = std::min(theme.gap, width * 0.5f);
         const Rect interior{x + inset, y + inset, std::max(0.0f, width - 2 * inset),
@@ -304,8 +306,12 @@ void FrameState::close_area(std::uint64_t expected, std::size_t depth) noexcept 
             const auto mark = container.mark;
             const auto found = widgets.find(record.id.value);
             if (found != widgets.end()) found->second.measured_height = measured;
+            // The style stack is back to its depth at open, so this is the
+            // theme the sheet was opened with.
+            const Theme sheet_theme = widget_theme(*this, {});
             canvas.pop_clip();
-            CanvasAccess::close_panel(canvas, mark, bounds, interior);
+            CanvasAccess::close_panel(canvas, mark, bounds, interior,
+                                      popup_elevation(*this, sheet_theme));
             stack.pop_back();
             CanvasAccess::end_layer(canvas, record.layer);
             interaction.layer_open_ = record.previous_layer_open;

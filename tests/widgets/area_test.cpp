@@ -2,6 +2,8 @@
 
 #include <doctest/doctest.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <variant>
 #include <vector>
 
@@ -29,6 +31,45 @@ wui::CustomItem custom(wui::Frame& frame, std::string_view key, float height,
     auto item = frame.custom(key, key, height, options);
     REQUIRE(std::holds_alternative<wui::CustomItem>(item));
     return std::get<wui::CustomItem>(item);
+}
+const wui::Vertex& vertex(const wui::DrawPacket& packet, const wui::Batch& batch) {
+    return packet->vertices[static_cast<std::size_t>(
+        std::int64_t{batch.base_vertex} + packet->indices[batch.first_index])];
+}
+void check_same(wui::Rect actual, wui::Rect expected) {
+    CHECK(actual.x == doctest::Approx(expected.x));
+    CHECK(actual.y == doctest::Approx(expected.y));
+    CHECK(actual.w == doctest::Approx(expected.w));
+    CHECK(actual.h == doctest::Approx(expected.h));
+}
+void check_rgb(wui::Color actual, wui::Color expected) {
+    CHECK(actual.r == doctest::Approx(expected.r));
+    CHECK(actual.g == doctest::Approx(expected.g));
+    CHECK(actual.b == doctest::Approx(expected.b));
+    CHECK(actual.a == doctest::Approx(expected.a));
+}
+// Generic popups share the dropdown menu's raised look: a cached shadow (a
+// texture other than the 1x1 white one) in the popup layer's clip, the sheet
+// (control mixed 5% toward text) and, last, a 1px hairline (control mixed 30%
+// toward secondary), both clipped to the popup bounds. Content without paint
+// leaves the three batches adjacent, starting at `first`.
+void check_raised_sheet(const wui::DrawPacket& packet, std::size_t first, wui::Rect bounds,
+                        wui::Rect layer_clip) {
+    REQUIRE(first + 3 == packet->batches.size());
+    const auto theme = wui::Theme::dark();
+    const auto mix = [](wui::Color a, wui::Color b, float t) {
+        return wui::Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1};
+    };
+    const auto& shadow = packet->batches[first];
+    const auto& sheet = packet->batches[first + 1];
+    const auto& hairline = packet->batches[first + 2];
+    CHECK(packet->textures[shadow.texture_index]->width > 1);
+    check_same(shadow.clip, layer_clip);
+    check_rgb(vertex(packet, shadow).premultiplied, {0, 0, 0, 0.8f});
+    check_same(sheet.clip, bounds);
+    check_rgb(vertex(packet, sheet).premultiplied, mix(theme.control, theme.text, 0.05f));
+    check_same(hairline.clip, bounds);
+    check_rgb(vertex(packet, hairline).premultiplied, mix(theme.control, theme.secondary, 0.3f));
 }
 wui::CustomItem custom_at(wui::Frame& frame, std::string_view key, wui::Rect bounds) {
     auto item = frame.custom_at(key, key, bounds);
@@ -159,9 +200,10 @@ TEST_CASE("popups gate underlying widgets, route their own content and dismiss o
         // The popup background is measured from its content: 20 + 2 * gap.
         const auto& panel = wui::test::semantic(packet, wui::Role::panel, "");
         CHECK(panel.bounds.h == doctest::Approx(36));
-        // Popup paint follows all main paint: the last geometry is its background.
+        // Popup paint follows all main paint: the last geometry is its hairline.
         const auto& last = packet->batches.back();
         CHECK(packet->vertices[packet->indices[last.first_index] + last.base_vertex].position.y >= 29);
+        check_raised_sheet(packet, packet->batches.size() - 3, {0, 30, 216, 36}, {0, 0, 400, 300});
     }
     {
         // Item inside the popup at (8, 38); the same point is over `under`.
@@ -220,7 +262,14 @@ TEST_CASE("modal popups center, swallow outside input and close only on request"
         auto frame = wui::test::begin(*context, input());
         frame.open_popup("confirm");
         emit(frame);
-        wui::test::finish(frame);
+        const auto packet = wui::test::finish(frame);
+        // The scrim stays below the raised sheet (its shadow included). The
+        // opening frame centers a popup of the not yet measured height 0.
+        REQUIRE(packet->batches.size() >= 4);
+        const auto first = packet->batches.size() - 3;
+        const auto& scrim = packet->batches[first - 1];
+        CHECK(vertex(packet, scrim).premultiplied.a == doctest::Approx(0.45f));
+        check_raised_sheet(packet, first, {100, 150, 200, 36}, {0, 0, 400, 300});
     }
     auto events = click(5, 5);
     events.push_back(wui::test::key_event(EventKind::key_down, wui::Key::escape));
