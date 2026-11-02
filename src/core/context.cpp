@@ -1,4 +1,5 @@
 #include "context_detail.hpp"
+#include "../layout/flow_detail.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -72,10 +73,19 @@ void FrameState::abort() noexcept {
     active = false;
 }
 void FrameState::prune() noexcept {
+    // One pass over the widget map: widgets emitted in the frame that just
+    // completed become present at `completed` (and so cannot be stale);
+    // the others are erased once absent for 120 completed frames.
     for (auto it = widgets.begin(); it != widgets.end();) {
-        if (completed >= it->second.last_present &&
-            completed - it->second.last_present >= 120) it = widgets.erase(it);
-        else ++it;
+        auto& widget = it->second;
+        if (widget.seen == generation) {
+            widget.last_present = completed;
+            ++it;
+        } else if (completed >= widget.last_present && completed - widget.last_present >= 120) {
+            it = widgets.erase(it);
+        } else {
+            ++it;
+        }
     }
     prune_edits();
 }
@@ -193,7 +203,11 @@ void FrameState::note_diagnostic(ErrorCode code, std::string_view message) {
 }
 Rect FrameState::take(float height) {
     if (error) return {};
-    auto result = stack.back().flow.take(height);
+    auto& flow = stack.back().flow;
+    Rect row;
+    if (FlowAccess::take(flow, height, row)) return row;
+    // A refused take leaves the flow unchanged; the checked call says why.
+    auto result = flow.take(height);
     if (auto* failed = std::get_if<Error>(&result)) {
         report(failed->code, failed->message.c_str(), true);
         return {};
@@ -219,14 +233,19 @@ std::shared_ptr<const TextRun> FrameState::shape(std::string_view value, FontRol
     return run;
 }
 void FrameState::glyphs(const TextRun& run, Vec2 top_left, Color color) {
+    // A per-glyph check never ran for an empty run, so neither does the check
+    // below: an earlier unchecked canvas failure is still reported where it was.
+    if (run.glyphs.empty()) return;
     for (const auto& glyph : run.glyphs) {
         Rect bounds = glyph.bounds;
         // A6 already includes its baseline in each glyph's y-down bounds.
         bounds.x += top_left.x;
         bounds.y += top_left.y;
         canvas.image(bounds, glyph.texture, glyph.uv, color);
-        if (!check_canvas()) return;
     }
+    // A failed canvas ignores all later paint and keeps its first error, so
+    // one check after the run reports exactly what a per-glyph check would.
+    check_canvas();
 }
 bool FrameState::valid_input(const FrameInput& input) {
     const auto r = input.viewport;

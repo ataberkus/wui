@@ -2,6 +2,10 @@
 
 #include <wui/input.hpp>
 
+#include <cstdint>
+#include <random>
+#include <unordered_set>
+
 namespace {
 constexpr wui::Id first{1};
 constexpr wui::Id second{2};
@@ -463,4 +467,114 @@ TEST_CASE("drag respects focus-loss barrier and event-time keyboard ownership") 
     input.end();
     CHECK(input.captured() == wui::Id{});
     CHECK(input.focused() == wui::Id{});
+}
+
+TEST_CASE("id set claims each id once per generation and clears in O(1)") {
+    wui::detail::IdSet set;
+    CHECK_FALSE(set.contains(7));
+    CHECK(set.capacity() == 0);
+    CHECK(set.insert(7));
+    CHECK_FALSE(set.insert(7));
+    CHECK(set.contains(7));
+    CHECK(set.size() == 1);
+    set.clear();
+    CHECK(set.size() == 0);
+    CHECK_FALSE(set.contains(7));
+    CHECK(set.insert(7));
+
+    // Sequential, structured and hashed ids, well past several growth steps.
+    set.clear();
+    constexpr std::uint64_t count = 5000;
+    for (std::uint64_t i = 1; i <= count; ++i) {
+        REQUIRE(set.insert(i));
+        REQUIRE(set.insert(i << 32));
+        REQUIRE(set.insert(wui::child_id({i}, "k").value));
+    }
+    CHECK(set.size() == 3 * count);
+    for (std::uint64_t i = 1; i <= count; ++i) {
+        REQUIRE(set.contains(i));
+        REQUIRE(set.contains(i << 32));
+        REQUIRE_FALSE(set.insert(wui::child_id({i}, "k").value));
+    }
+    CHECK_FALSE(set.contains(count + 1));
+
+    // Storage is retained: a generation of the same size never grows it.
+    const auto retained = set.capacity();
+    CHECK(retained >= 3 * count);
+    set.clear();
+    for (std::uint64_t i = 1; i <= 3 * count; ++i) REQUIRE(set.insert(i * 0x10001));
+    CHECK(set.capacity() == retained);
+    CHECK_FALSE(set.contains(1));
+}
+
+TEST_CASE("id set at capacity rejects duplicates without growing and keeps every id when it grows") {
+    wui::detail::IdSet set;
+    REQUIRE(set.insert(1));
+    const auto initial = set.capacity();
+    REQUIRE(initial > 1);
+    for (std::uint64_t i = 2; i <= initial; ++i) REQUIRE(set.insert(i));
+    REQUIRE(set.size() == initial);
+    // Full: a duplicate is still recognized and does not reallocate.
+    CHECK_FALSE(set.insert(initial));
+    CHECK_FALSE(set.insert(1));
+    CHECK(set.capacity() == initial);
+    // The next new id grows the storage; nothing is dropped by the rehash.
+    CHECK(set.insert(initial + 1));
+    CHECK(set.capacity() > initial);
+    for (std::uint64_t i = 1; i <= initial + 1; ++i) CHECK(set.contains(i));
+    CHECK(set.size() == initial + 1);
+}
+
+TEST_CASE("duplicate claims are ignored in large frames and ids are reclaimable next frame") {
+    wui::Interaction input;
+    constexpr std::uint64_t count = 3000;
+    const auto bounds = [](std::uint64_t i) {
+        return wui::Rect{static_cast<float>(i % 50) * 10.0f, static_cast<float>(i / 50) * 10.0f, 10, 10};
+    };
+    for (int frame_index = 0; frame_index < 2; ++frame_index) {
+        wui::FrameInput frame{{0, 0, 500, 600}};
+        frame.events = {{wui::EventKind::pointer_move, {2005 % 50 * 10.0f + 5, 2005 / 50 * 10.0f + 5}}};
+        input.begin(frame, {});
+        for (std::uint64_t i = 1; i <= count; ++i) {
+            const auto behavior = input.button({i}, bounds(i), i != 17);
+            if (i == 2005) CHECK(behavior.hovered);
+        }
+        // Repeated ids, enabled or not, early or late, claim nothing.
+        CHECK_FALSE(input.button({2005}, bounds(2005), true).hovered);
+        CHECK_FALSE(input.drag({1}, bounds(1), true).behavior.hovered);
+        bool edited = false;
+        input.edit({count}, true, [&](const wui::InputEvent&) { edited = true; });
+        CHECK_FALSE(edited);
+        // A fresh id is still claimed after the duplicates.
+        CHECK(input.button({count + 1}, bounds(2005), true).hovered);
+        input.end();
+    }
+}
+
+TEST_CASE("id set matches a reference set across generations of clustered ids") {
+    // Ids that share low bits, differ only in high bits, or repeat often stress
+    // the probe sequences; every generation must start empty.
+    wui::detail::IdSet set;
+    std::unordered_set<std::uint64_t> reference;
+    std::mt19937_64 random(20261102);
+    for (int generation = 0; generation < 200; ++generation) {
+        set.clear();
+        reference.clear();
+        const auto count = generation % 25 == 0 ? 5000 : static_cast<int>(random() % 400);
+        for (int i = 0; i < count; ++i) {
+            std::uint64_t id = 0;
+            switch (random() % 4) {
+            case 0: id = 1 + random() % 64; break;
+            case 1: id = (1 + random() % 512) << 55; break;
+            case 2: id = (1 + random() % 4096) * 0x9E3779B97F4A7C15ULL; break;
+            default: id = random() | 1; break;
+            }
+            REQUIRE(set.insert(id) == reference.insert(id).second);
+        }
+        REQUIRE(set.size() == reference.size());
+        REQUIRE(set.capacity() >= set.size());
+        for (const auto id : reference) REQUIRE(set.contains(id));
+        for (std::uint64_t probe = 1; probe <= 128; ++probe)
+            REQUIRE(set.contains(probe) == reference.contains(probe));
+    }
 }

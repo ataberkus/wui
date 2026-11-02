@@ -152,6 +152,8 @@ struct FrameState {
     bool usable(std::uint64_t);
     bool check_canvas();
     void abort() noexcept;
+    // After a completed frame: marks widgets seen in it present at
+    // `completed` and erases widgets absent for 120 completed frames.
     void prune() noexcept;
     WidgetState* register_widget(Id);
     bool valid_input(const FrameInput&);

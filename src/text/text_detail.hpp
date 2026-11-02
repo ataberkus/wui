@@ -38,12 +38,17 @@ struct FontFace {
     std::uint32_t replacement_glyph = 0;
 };
 
+// Hash of every run key field; computed once per lookup and stored with each
+// cached key, so neither probing nor bucket walks rehash key strings.
+std::size_t hash_run_key(std::string_view text, std::string_view language, FontRole role,
+                         std::uint32_t physical_ppem, float scale) noexcept;
+
 struct RunKeyView {
     std::string_view text, language;
     FontRole role;
     std::uint32_t physical_ppem;
     float scale;
-    bool operator==(const RunKeyView&) const = default;
+    std::size_t hash; // hash_run_key of the fields above
 };
 
 struct RunKey {
@@ -51,18 +56,23 @@ struct RunKey {
     FontRole role;
     std::uint32_t physical_ppem;
     float scale;
+    std::size_t hash; // hash_run_key of the fields above
     operator RunKeyView() const noexcept {
-        return {text, language, role, physical_ppem, scale};
+        return {text, language, role, physical_ppem, scale, hash};
     }
 };
 
 struct RunKeyHash {
-    std::size_t operator()(RunKeyView key) const noexcept;
+    std::size_t operator()(const RunKeyView& key) const noexcept { return key.hash; }
 };
 
 struct RunKeyEqual {
-    bool operator()(RunKeyView left, RunKeyView right) const noexcept {
-        return left == right;
+    bool operator()(const RunKeyView& left, const RunKeyView& right) const noexcept {
+        // The stored hash rejects almost every non-matching node without
+        // touching key strings.
+        return left.hash == right.hash && left.physical_ppem == right.physical_ppem &&
+               left.role == right.role && left.scale == right.scale &&
+               left.text == right.text && left.language == right.language;
     }
 };
 

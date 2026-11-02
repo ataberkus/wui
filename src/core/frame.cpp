@@ -280,10 +280,7 @@ Result<DrawPacket> Frame::finish() {
             return packet;
         }
         ++s.completed;
-        for (auto& [id, widget] : s.widgets) {
-            if (widget.seen == s.generation) widget.last_present = s.completed;
-        }
-        s.prune();
+        s.prune(); // also marks this frame's widgets present
         s.active = false;
         s.stack.clear();
         s.style_stack.clear();

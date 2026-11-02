@@ -8,6 +8,8 @@
 
 namespace wui {
 
+namespace detail { struct FlowAccess; }
+
 enum class ColumnKind { fixed, share };
 
 struct Column {
@@ -22,6 +24,7 @@ public:
     float used_height() const;
 
 private:
+    friend struct detail::FlowAccess;
     Rect area_;
     float gap_ = 0;
     float used_height_ = 0;

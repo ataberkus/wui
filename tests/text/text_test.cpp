@@ -477,3 +477,32 @@ TEST_CASE("text and button labels honour start center and end alignment") {
     CHECK(left(end, row(3)) == doctest::Approx(200 - run->width + bearing));
     CHECK(left(label, row(4)) == doctest::Approx(wui::Theme::dark().gap + bearing));
 }
+
+TEST_CASE("request byte checks still apply next to cached runs and keep their precedence") {
+    Fixture f;
+    const auto cached = f.service->shape({"A", wui::FontRole::body, 14, 1, "en"});
+    REQUIRE(std::holds_alternative<std::shared_ptr<const wui::TextRun>>(cached));
+    // A hit returns the cached run without rechecking its validated bytes.
+    const auto hit = f.service->shape({"A", wui::FontRole::body, 14, 1, "en"});
+    REQUIRE(std::holds_alternative<std::shared_ptr<const wui::TextRun>>(hit));
+    CHECK(std::get<std::shared_ptr<const wui::TextRun>>(hit) ==
+          std::get<std::shared_ptr<const wui::TextRun>>(cached));
+
+    const auto error_of = [&](wui::ShapeRequest request) {
+        const auto result = f.service->shape(request);
+        REQUIRE(std::holds_alternative<wui::Error>(result));
+        return std::get<wui::Error>(result);
+    };
+    // Same text, invalid tags: different keys, so the miss path rejects them.
+    CHECK(error_of({"A", wui::FontRole::body, 14, 1, "e n"}).code == wui::ErrorCode::invalid_argument);
+    CHECK(error_of({"A", wui::FontRole::body, 14, 1, std::string_view("en\0x", 4)}).code ==
+          wui::ErrorCode::invalid_argument);
+    const std::string oversized(1024 * 1024 + 1, 'A');
+    const auto too_long = error_of({oversized, wui::FontRole::body, 14, 1, "en"});
+    CHECK(too_long.code == wui::ErrorCode::capacity);
+    CHECK(too_long.message == "Text request exceeds the one-MiB byte limit");
+    // Size errors still precede byte errors.
+    const auto both = error_of({"A", wui::FontRole::body, 0, 1, "e n"});
+    CHECK(both.message == "Text size and scale must be finite and positive");
+    CHECK(f.shape("A")->width > 0);
+}
