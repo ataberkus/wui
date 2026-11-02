@@ -151,8 +151,21 @@ struct FrameState {
     // recording it. Subsequent calls become inert until finalization/abort.
     void report(ErrorCode, const char* message, bool contract = false) noexcept;
     void report(Error) noexcept;
-    bool usable(std::uint64_t);
-    bool check_canvas();
+    // Inline fast paths: both are polled several times per widget, and the
+    // common healthy case is only a few loads. Failures go out of line.
+    bool usable(std::uint64_t expected) {
+        if (!owner_alive || !active || generation != expected) return report_unusable();
+        return !error && check_canvas();
+    }
+    // Reports a failed canvas's first error (unless an error is already
+    // recorded) and returns whether the frame is still error-free.
+    bool check_canvas() {
+        if (error) return false;
+        if (!CanvasAccess::failed(canvas)) return true;
+        return report_canvas_failure();
+    }
+    bool report_unusable();
+    bool report_canvas_failure();
     void abort() noexcept;
     // After a completed frame: marks widgets seen in it present at
     // `completed` and erases widgets absent for 120 completed frames,

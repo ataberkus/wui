@@ -48,16 +48,11 @@ void FrameState::report(ErrorCode code, const char* message, bool contract) noex
 void FrameState::report(Error value) noexcept {
     if (!error) error = std::move(value);
 }
-bool FrameState::usable(std::uint64_t expected) {
-    if (!owner_alive || !active || generation != expected) {
-        report(ErrorCode::invalid_frame, "Frame no longer belongs to an active Context", true);
-        return false;
-    }
-    return !error && check_canvas();
+bool FrameState::report_unusable() {
+    report(ErrorCode::invalid_frame, "Frame no longer belongs to an active Context", true);
+    return false;
 }
-bool FrameState::check_canvas() {
-    if (error) return false;
-    if (!CanvasAccess::failed(canvas)) return true;
+bool FrameState::report_canvas_failure() {
     if (auto failed = CanvasAccess::status(canvas)) report(std::move(*failed));
     return !error;
 }
