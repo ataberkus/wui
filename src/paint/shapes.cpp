@@ -1184,21 +1184,39 @@ Vertex* put_vertices(Vertex* out, std::span<const Vec2> points, Color color) {
 
 // Index sequences that repeat with a fixed per-lane step, a block at a time:
 // `blocks` copies of `values`, every lane advancing by its `step` between
-// copies. Twelve lanes are three 128-bit vectors, which compilers keep in
-// registers, so a block costs three additions and three stores instead of
-// recomputing every index.
+// copies. Twelve lanes are three 128-bit vectors kept in registers, so a
+// block costs three additions and three stores instead of recomputing every
+// index (explicitly with SSE2, see glyph_quad.hpp, and otherwise as
+// compilers vectorize the lane loops).
 using IndexBlock = std::array<std::uint32_t, 12>;
-std::uint32_t* put_blocks(std::uint32_t* out, IndexBlock values, const IndexBlock& step,
+std::uint32_t* put_blocks(std::uint32_t* out, const IndexBlock& values, const IndexBlock& step,
                           std::size_t blocks) {
-    for (std::size_t block = 0; block < blocks; ++block) {
-        for (std::size_t k = 0; k < values.size(); ++k) {
-            out[k] = values[k];
+#ifdef WUI_GLYPH_CORNERS_SSE2
+    const auto load = [](const IndexBlock& lanes, std::size_t at) {
+        return _mm_loadu_si128(reinterpret_cast<const __m128i*>(lanes.data() + at));
+    };
+    __m128i first = load(values, 0), second = load(values, 4), third = load(values, 8);
+    const __m128i first_step = load(step, 0), second_step = load(step, 4),
+                  third_step = load(step, 8);
+    for (std::size_t block = 0; block < blocks; ++block, out += 12) {
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(out), first);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(out + 4), second);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(out + 8), third);
+        first = _mm_add_epi32(first, first_step);
+        second = _mm_add_epi32(second, second_step);
+        third = _mm_add_epi32(third, third_step);
+    }
+#else
+    IndexBlock lanes = values;
+    for (std::size_t block = 0; block < blocks; ++block, out += 12) {
+        for (std::size_t k = 0; k < lanes.size(); ++k) {
+            out[k] = lanes[k];
         }
-        out += values.size();
-        for (std::size_t k = 0; k < values.size(); ++k) {
-            values[k] += step[k];
+        for (std::size_t k = 0; k < lanes.size(); ++k) {
+            lanes[k] += step[k];
         }
     }
+#endif
     return out;
 }
 
@@ -1522,17 +1540,18 @@ struct Canvas::Impl {
         mesh->vertex = put_vertices(mesh->vertex, outer, {0, 0, 0, 0});
         std::uint32_t* index = mesh->index;
         const auto b = mesh->base;
+        // Whole blocks only: a final partial block writes up to three extra
+        // fan triangles over the start of the fringe ring, or one extra ring
+        // edge over the closing edge's slots, and the writes that follow
+        // (the ring, the closing edge) replace them. Nothing is written past
+        // the mesh.
         if (interior.empty()) {
             // Fan triangles (b, b + t, b + t + 1) for t in [1, count - 1),
             // four per block.
-            const std::uint32_t blocks = (count - 2) / 4;
-            index = put_blocks(index,
-                               {b, b + 1, b + 2, b, b + 2, b + 3,
-                                b, b + 3, b + 4, b, b + 4, b + 5},
-                               {0, 4, 4, 0, 4, 4, 0, 4, 4, 0, 4, 4}, blocks);
-            for (std::uint32_t t = 1 + blocks * 4; t + 1 < count; ++t) {
-                put(index, std::array{b, b + t, b + t + 1});
-            }
+            put_blocks(index,
+                       {b, b + 1, b + 2, b, b + 2, b + 3, b, b + 3, b + 4, b, b + 4, b + 5},
+                       {0, 4, 4, 0, 4, 4, 0, 4, 4, 0, 4, 4}, (count - 2 + 3) / 4);
+            index += std::size_t{count - 2} * 3;
         } else {
             for (const auto local : interior) {
                 *index++ = b + local;
@@ -1542,15 +1561,11 @@ struct Canvas::Impl {
         // and (b + i, o + i, o + next). Edges that do not wrap go two per
         // block; the closing edge (count - 1, 0) comes last.
         const auto o = b + count; // first outer (fringe) vertex
-        const std::uint32_t pairs = (count - 1) / 2;
-        index = put_blocks(index,
-                           {b, o + 1, b + 1, b, o, o + 1,
-                            b + 1, o + 2, b + 2, b + 1, o + 1, o + 2},
-                           {2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2}, pairs);
-        for (std::uint32_t i = pairs * 2; i + 1 < count; ++i) {
-            put(index, std::array{b + i, o + i + 1, b + i + 1, b + i, o + i, o + i + 1});
-        }
+        put_blocks(index,
+                   {b, o + 1, b + 1, b, o, o + 1, b + 1, o + 2, b + 2, b + 1, o + 1, o + 2},
+                   {2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2}, (count - 1 + 1) / 2);
         const auto last = count - 1;
+        index += std::size_t{last} * 6;
         put(index, std::array{b + last, o, b, b + last, o + last, o});
         mesh->index = index;
         end_mesh(*mesh, *white);
