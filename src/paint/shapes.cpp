@@ -1430,7 +1430,9 @@ struct Canvas::Impl {
     // texture run is recorded with one end_mesh() call. Returns false,
     // having done nothing, when the run's worst case would overflow the
     // packet's index space; the caller then takes the per-glyph path, which
-    // fails at exactly the glyph where the overflow happens.
+    // fails at exactly the glyph where the overflow happens. The caller does
+    // the same when making room throws, which happens before anything
+    // changes (see CanvasAccess::glyph_run).
     //
     // Equivalence with the per-glyph path, which validates the bounds, uv
     // and tint of each glyph (one shared error), then skips empty glyphs
@@ -2366,8 +2368,24 @@ void CanvasAccess::flush_layers(Canvas& canvas) {
 
 void CanvasAccess::glyph_run(Canvas& canvas, std::span<const GlyphQuad> glyphs, Vec2 offset,
                              Color tint) {
-    if (canvas.impl_->glyph_run(glyphs, offset, tint)) {
-        return;
+    auto& impl = *canvas.impl_;
+    const auto index_size = impl.index_size;
+    try {
+        if (impl.glyph_run(glyphs, offset, tint)) {
+            return;
+        }
+    } catch (const std::bad_alloc&) {
+        // The run makes room for all of its glyphs, empty and invalid ones
+        // included, before it changes anything. When that room (or an error
+        // message) cannot be allocated while nothing is recorded yet, the
+        // per-glyph path below starts over from the same state and fails,
+        // or not, exactly where one image per glyph would. Once a texture
+        // run is recorded, the exception comes from adding a batch or from
+        // an error message after recorded quads, where the per-glyph path
+        // throws as well, and it propagates.
+        if (impl.index_size != index_size) {
+            throw;
+        }
     }
     for (const auto& glyph : glyphs) {
         Rect bounds = glyph.bounds;

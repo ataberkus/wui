@@ -1,13 +1,17 @@
 #include <wui/wui.hpp>
 
+#include "../../src/paint/canvas_access.hpp"
+
 #include <array>
 #include <cstdlib>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <new>
 #include <string>
 #include <utility>
+#include <vector>
 #ifdef _WIN32
 #include <malloc.h>
 #endif
@@ -297,6 +301,82 @@ int frame_reuse() {
     std::puts("Warmed widget frame with popup, tooltip, validation, sliders, text/numeric inputs and scoped paint performs zero allocations across 300 frames.");
     return 0;
 }
+
+// A batched glyph run makes room for all of its glyphs at once, empty and
+// invalid ones included. When that allocation fails it must paint and fail
+// exactly like one Canvas::image per glyph on the same canvas, which here
+// allocates only for its first quad (and gets that allocation).
+int glyph_run_allocation_failure() {
+    auto textures = std::make_shared<wui::TextureStore>(1024 * 1024);
+    const std::array<std::byte, 4> pixel{std::byte{255}, std::byte{255}, std::byte{255},
+                                         std::byte{255}};
+    auto image = textures->create(1, 1, pixel, wui::AlphaMode::straight);
+    if (!std::holds_alternative<wui::TextureHandle>(image)) return 20;
+    const auto texture = std::get<wui::TextureHandle>(image);
+    const wui::GlyphQuad empty{texture, {0, 0, 0, 9}, {0, 0, 1, 1}};
+    const wui::GlyphQuad quad{texture, {1, 2, 6, 9}, {0, 0, 0.5f, 0.5f}};
+    const wui::GlyphQuad invalid{texture, {0, 0, -1, 9}, {0, 0, 1, 1}};
+    const wui::Vec2 offset{3, 4};
+    const wui::Color tint{1, 0.5f, 0.25f, 0.5f};
+    const std::array<std::vector<wui::GlyphQuad>, 2> runs{
+        std::vector<wui::GlyphQuad>{empty, empty, empty, empty, empty, empty, empty, quad},
+        std::vector<wui::GlyphQuad>{quad, invalid, quad, quad, quad, quad, quad, quad}};
+    for (const auto& glyphs : runs) {
+        wui::Canvas expected(textures, 1);
+        expected.begin({0, 0, 100, 100}, 1);
+        for (const auto& glyph : glyphs) {
+            expected.image({glyph.bounds.x + offset.x, glyph.bounds.y + offset.y,
+                            glyph.bounds.w, glyph.bounds.h},
+                           glyph.texture, glyph.uv, tint);
+        }
+        const auto expected_status = wui::detail::CanvasAccess::status(expected);
+        auto reference = expected.finish();
+
+        wui::Canvas actual(textures, 1);
+        actual.begin({0, 0, 100, 100}, 1);
+        bool armed = true; // fails the next allocation of at least three vertices
+        watched_model = &armed;
+        fail_after_mutation = true;
+        injected = false;
+        bool threw = false;
+        try {
+            wui::detail::CanvasAccess::glyph_run(actual, glyphs, offset, tint);
+        } catch (const std::bad_alloc&) {
+            threw = true;
+        }
+        const bool hit = injected;
+        fail_after_mutation = false;
+        watched_model = nullptr;
+        const auto actual_status = wui::detail::CanvasAccess::status(actual);
+        auto result = actual.finish();
+        if (threw || !hit) {
+            std::fprintf(stderr, "glyph run allocation failure: threw=%d injected=%d\n", threw,
+                         hit);
+            return 21;
+        }
+        if (actual_status.has_value() != expected_status.has_value() ||
+            (actual_status && (actual_status->code != expected_status->code ||
+                               actual_status->message != expected_status->message))) {
+            return 22;
+        }
+        if (std::holds_alternative<wui::DrawPacket>(result) !=
+            std::holds_alternative<wui::DrawPacket>(reference)) {
+            return 23;
+        }
+        if (std::holds_alternative<wui::DrawPacket>(result)) {
+            const auto& a = *std::get<wui::DrawPacket>(result);
+            const auto& b = *std::get<wui::DrawPacket>(reference);
+            if (a.vertices.size() != 4 || a.vertices.size() != b.vertices.size() ||
+                std::memcmp(a.vertices.data(), b.vertices.data(),
+                            a.vertices.size() * sizeof(wui::Vertex)) != 0 ||
+                a.indices != b.indices || a.batches.size() != b.batches.size()) {
+                return 24;
+            }
+        }
+    }
+    std::puts("A glyph run whose room cannot be allocated paints and fails like one image per glyph.");
+    return 0;
+}
 }
 
 int main(int argc, char** argv) {
@@ -344,6 +424,7 @@ int main(int argc, char** argv) {
             "usage: wui_allocation_probe [--semantic-reuse|--allocation-contracts|--frame-reuse]\n");
         return 2;
     }
+    if (const int failed = glyph_run_allocation_failure()) return failed;
     auto created = wui::Context::create({wui::Theme::dark(),
         std::make_shared<wui::TextureStore>(1024 * 1024), std::make_shared<Text>()});
     if (!std::holds_alternative<std::unique_ptr<wui::Context>>(created)) return 2;
