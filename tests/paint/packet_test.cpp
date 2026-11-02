@@ -8,6 +8,7 @@
 #include "../../src/paint/canvas_access.hpp"
 
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -341,5 +342,63 @@ TEST_CASE("canvas semantic ownership survives slot reuse") {
         auto clean = std::get<wui::DrawPacket>(std::move(finished));
         REQUIRE(clean->semantics.size() == 1);
         CHECK(clean->semantics[0].label == "clean");
+    }
+}
+
+TEST_CASE("packet validation flags every nonfinite float and stray index at any position") {
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    // Finite extremes must pass: largest magnitudes, denormals, zeros.
+    const std::array finite{std::numeric_limits<float>::max(),
+                            -std::numeric_limits<float>::max(),
+                            std::numeric_limits<float>::denorm_min(), -0.0f, 0.0f, 1.5f};
+    const std::array nonfinite{nan, -nan, inf, -inf, std::bit_cast<float>(0x7f800001u),
+                               std::bit_cast<float>(0xff800000u | 0x123u)};
+    // Vertex counts cover whole two-vertex steps and a remaining vertex.
+    for (std::size_t count = 3; count <= 7; ++count) {
+        auto packet = triangle_packet();
+        packet.vertices.resize(count, packet.vertices[0]);
+        CHECK_FALSE(wui::validate_packet(packet).has_value());
+        for (std::size_t vertex = 0; vertex < count; ++vertex) {
+            for (std::size_t lane = 0; lane < 8; ++lane) {
+                for (const float value : finite) {
+                    auto accepted = packet;
+                    auto words = std::bit_cast<std::array<float, 8>>(accepted.vertices[vertex]);
+                    words[lane] = value;
+                    accepted.vertices[vertex] = std::bit_cast<wui::Vertex>(words);
+                    CHECK_FALSE(wui::validate_packet(accepted).has_value());
+                }
+                for (const float value : nonfinite) {
+                    auto rejected = packet;
+                    auto words = std::bit_cast<std::array<float, 8>>(rejected.vertices[vertex]);
+                    words[lane] = value;
+                    rejected.vertices[vertex] = std::bit_cast<wui::Vertex>(words);
+                    const auto error = wui::validate_packet(rejected);
+                    REQUIRE(error.has_value());
+                    CHECK(error->message == "Nonfinite vertex");
+                }
+            }
+        }
+    }
+    // Index counts cover eight- and four-index steps and every tail length.
+    for (std::uint32_t count = 3; count <= 30; count += 3) {
+        auto packet = triangle_packet();
+        packet.vertices.resize(5, packet.vertices[0]);
+        packet.indices.assign(count, 4); // the last vertex
+        packet.batches[0].index_count = count;
+        CHECK_FALSE(wui::validate_packet(packet).has_value());
+        for (std::uint32_t at = 0; at < count; ++at) {
+            for (const std::uint32_t stray : {5u, 6u, 0x7fffffffu, 0x80000000u, 0x80000004u,
+                                              0xfffffffbu, 0xffffffffu}) {
+                auto rejected = packet;
+                rejected.indices[at] = stray;
+                const auto error = wui::validate_packet(rejected);
+                REQUIRE(error.has_value());
+                CHECK(error->message == "Invalid vertex reference");
+            }
+            auto accepted = packet;
+            accepted.indices[at] = 0;
+            CHECK_FALSE(wui::validate_packet(accepted).has_value());
+        }
     }
 }
