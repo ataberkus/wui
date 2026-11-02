@@ -303,8 +303,8 @@ bool emit_text_area(FrameState& frame, std::string_view key, std::string_view la
     {
         WidgetClip clip(frame, hit);
         if (!frame.check_canvas()) return changed;
-        paint_surface(frame, row, button_fill(theme, *state, behavior, options.enabled),
-                      behavior.focused, theme, options.invalid);
+        const float hover = options.enabled ? (behavior.held ? 1.0f : state->hover.value()) : 0.0f;
+        paint_field(frame, row, theme, hover, behavior.focused, options.enabled, options.invalid);
         if (!frame.check_canvas()) return changed;
         WidgetClip text_clip(frame, intersect(content, hit));
         if (!frame.check_canvas()) return changed;
@@ -316,11 +316,12 @@ bool emit_text_area(FrameState& frame, std::string_view key, std::string_view la
             const auto hint = frame.shape(options.placeholder.empty() ? label : options.placeholder,
                                           FontRole::body);
             if (!hint) return changed;
-            frame.glyphs(*hint, {content.x, content.y}, theme.secondary);
+            frame.glyphs(*hint, {content.x, content.y},
+                         options.enabled ? theme.secondary : disabled_ink(theme));
         }
         const std::size_t from = std::min(editor->caret, editor->anchor);
         const std::size_t to = std::max(editor->caret, editor->anchor);
-        const Color ink = options.enabled ? theme.text : theme.secondary;
+        const Color ink = options.enabled ? theme.text : disabled_ink(theme);
         for (std::size_t i = first; i < last && frame.check_canvas(); ++i) {
             const auto& line = editor->lines[i];
             const float y = top + static_cast<float>(i) * line_height;
@@ -329,7 +330,8 @@ bool emit_text_area(FrameState& frame, std::string_view key, std::string_view la
                 // A selected hard break shows as a short stub past the text.
                 float right = prefix_width(frame, *editor, i, std::min(to, line.end));
                 if (to > line.end && !soft_wrapped(*editor, i)) right += theme.gap * 0.5f;
-                frame.canvas.rounded_rect({content.x + left, y, right - left, line_height}, 0, theme.accent);
+                frame.canvas.rounded_rect({content.x + left, y, right - left, line_height}, 0,
+                                          selection_fill(theme));
             }
             if (line.end > line.begin) {
                 const auto run = frame.shape(line_text(*editor, line), FontRole::body);
@@ -351,7 +353,7 @@ bool emit_text_area(FrameState& frame, std::string_view key, std::string_view la
             const float thumb = std::max(line_height, content.h * content.h / content_height);
             const float y = content.y + (content.h - thumb) * (offset / max_offset);
             frame.canvas.rounded_rect({content.x + content.w - 3, y, 3, thumb}, 1.5f,
-                                      mix(theme.control, theme.text, 0.35f));
+                                      mix(field_fill(theme, true), theme.text, 0.35f));
         }
     }
     if (!frame.check_canvas()) return changed;
