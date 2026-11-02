@@ -160,14 +160,15 @@ struct FrameState {
         return !error && check_canvas();
     }
     // Reports a failed canvas's first error (unless an error is already
-    // recorded) and returns whether the frame is still error-free.
-    bool check_canvas() {
+    // recorded) and returns whether the frame is still error-free. Never
+    // throws: scope closers call it from noexcept code.
+    bool check_canvas() noexcept {
         if (error) return false;
         if (!CanvasAccess::failed(canvas)) return true;
         return report_canvas_failure();
     }
     bool report_unusable();
-    bool report_canvas_failure();
+    bool report_canvas_failure() noexcept;
     void abort() noexcept;
     // After a completed frame: marks widgets seen in it present at
     // `completed` and erases widgets absent for 120 completed frames,
@@ -180,13 +181,14 @@ struct FrameState {
     bool copy_label(std::string_view);
     void note_choice_error(std::string_view);
     // Allocates the next row of the current container's flow; reports a
-    // refused row (or returns {} after an error). Inline healthy path.
-    Rect take(float height) {
+    // refused row (or returns {} after an error). Inline healthy path. Never
+    // throws: scope closers call it from noexcept code.
+    Rect take(float height) noexcept {
         Rect row;
         if (!error && FlowAccess::take(stack.back().flow, height, row)) return row;
         return refuse_take(height);
     }
-    Rect refuse_take(float height);
+    Rect refuse_take(float height) noexcept;
     Rect clip() const { return stack.back().clip; }
     // size <= 0 selects the theme size for the role (display uses heading size).
     std::shared_ptr<const TextRun> shape(std::string_view, FontRole, float size = 0);

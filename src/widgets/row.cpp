@@ -119,12 +119,20 @@ void FrameState::close_cell(std::uint64_t expected, std::size_t row_index,
         report(ErrorCode::unbalanced_scope, "Cell scopes must close in reverse opening order", true);
         return;
     }
-    rows[row_index].tallest = std::max(rows[row_index].tallest,
-                                       FlowAccess::used_height(stack.back().flow));
-    canvas.pop_clip();
-    stack.pop_back();
-    rows[row_index].cell_open = false;
-    check_canvas();
+    try {
+        rows[row_index].tallest = std::max(rows[row_index].tallest,
+                                           FlowAccess::used_height(stack.back().flow));
+        // Canvas::pop_clip builds (and allocates) an error when the clip stack
+        // is unbalanced, e.g. after the caller popped this cell's clip itself.
+        canvas.pop_clip();
+        stack.pop_back();
+        rows[row_index].cell_open = false;
+        check_canvas();
+    } catch (const std::bad_alloc&) {
+        report(ErrorCode::capacity, "Cell finalization allocation failed");
+    } catch (...) {
+        report(ErrorCode::invalid_frame, "Cell cleanup failed");
+    }
 }
 
 void FrameState::close_row(std::uint64_t expected, std::size_t row_index) noexcept {

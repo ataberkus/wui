@@ -109,10 +109,7 @@ Flow::Flow(Rect area, float gap)
 Result<Rect> Flow::take(float height) {
     Rect row;
     if (detail::FlowAccess::take(*this, height, row)) return row;
-    if (!valid_ || !std::isfinite(height) || height < 0.0f) {
-        return invalid_layout("flow dimensions and gap must be finite and nonnegative");
-    }
-    return invalid_layout("flow dimensions overflow");
+    return invalid_layout(detail::FlowAccess::refusal(*this, height));
 }
 
 float Flow::used_height() const {
