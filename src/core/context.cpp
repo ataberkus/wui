@@ -76,34 +76,21 @@ void FrameState::abort() noexcept {
 void FrameState::prune() noexcept {
     // One pass over the widget map: widgets emitted in the frame that just
     // completed become present at `completed` (and so cannot be stale);
-    // the others are erased once absent for 120 completed frames.
+    // the others are erased once absent for 120 completed frames. Editor and
+    // grid state exist only for a registered widget id, so they are erased
+    // with it: none of them can outlive its widget.
     for (auto it = widgets.begin(); it != widgets.end();) {
         auto& widget = it->second;
         if (widget.seen == generation) {
             widget.last_present = completed;
             ++it;
         } else if (completed >= widget.last_present && completed - widget.last_present >= 120) {
+            if (!edits.empty()) edits.erase(it->first);
+            if (!grids.empty()) grids.erase(it->first);
             it = widgets.erase(it);
         } else {
             ++it;
         }
-    }
-    prune_edits();
-}
-void FrameState::prune_edits() noexcept {
-    for (auto it = edits.begin(); it != edits.end();) {
-        const auto owner = widgets.find(it->first);
-        if (owner == widgets.end() || completed < owner->second.last_present ||
-            completed - owner->second.last_present < 120) {
-            ++it;
-            continue;
-        }
-        it = edits.erase(it);
-    }
-    // Grid state of a widget pruned above goes with it.
-    for (auto it = grids.begin(); it != grids.end();) {
-        if (widgets.contains(it->first)) ++it;
-        else it = grids.erase(it);
     }
 }
 GridState* FrameState::grid_state(Id id) {
@@ -134,8 +121,6 @@ WidgetState* FrameState::register_widget(Id id) {
     found->second.bounds = {};
     found->second.seen = generation;
     ++count;
-    const auto editor = edits.find(id.value);
-    if (editor != edits.end()) editor->second.last_present = completed;
     return &found->second;
 }
 bool FrameState::account_edit_bytes(std::size_t bytes) {

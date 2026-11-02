@@ -80,7 +80,6 @@ struct EditState {
     std::pmr::vector<EditSnapshot> undo;
     std::pmr::vector<EditLine> lines; // text_area wrap layout of draft
     std::size_t undo_bytes = 0, caret = 0, anchor = 0;
-    std::uint64_t last_present = 0;
     bool composition_active = false;
     float layout_width = -1;  // width `lines` were wrapped at; < 0 means stale
     float preferred_x = -1;   // caret column kept across vertical moves
@@ -153,7 +152,8 @@ struct FrameState {
     bool check_canvas();
     void abort() noexcept;
     // After a completed frame: marks widgets seen in it present at
-    // `completed` and erases widgets absent for 120 completed frames.
+    // `completed` and erases widgets absent for 120 completed frames,
+    // together with their editor and grid state.
     void prune() noexcept;
     WidgetState* register_widget(Id);
     bool valid_input(const FrameInput&);
@@ -194,7 +194,6 @@ struct FrameState {
     bool tooltip_for_owner(Id owner, std::string_view message);
     EditState* edit_state(Id id);
     bool account_edit_bytes(std::size_t bytes);
-    void prune_edits() noexcept;
     GridState* grid_state(Id id);
     bool input_blocked() const { return interaction.blocked(); }
     void note_diagnostic(ErrorCode code, std::string_view message);

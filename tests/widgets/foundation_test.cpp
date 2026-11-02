@@ -660,6 +660,124 @@ TEST_CASE("retained allocation capacity becomes available after 120 absent compl
     CHECK(semantic(packet, wui::Role::button, "Admitted after expiry").enabled);
 }
 
+namespace {
+wui::InputEvent typed(std::string text) {
+    wui::InputEvent event{wui::EventKind::text};
+    event.text = std::move(text);
+    return event;
+}
+wui::InputEvent undo_key() {
+    auto event = key_event(wui::EventKind::key_down, wui::Key::z);
+    event.control = true;
+    return event;
+}
+// Completes `count` frames that emit nothing.
+void absent_frames(wui::Context& context, int count) {
+    for (int index = 0; index < count; ++index) {
+        auto frame = begin(context);
+        finish(frame);
+    }
+}
+}
+
+TEST_CASE("editor state is released with its widget after 120 absent completed frames") {
+    // A long model makes each editor's retained draft and published copy
+    // dominate node and bucket bookkeeping in the public retained byte total.
+    for (const bool area : {false, true}) {
+        CAPTURE(area);
+        auto context = make_context();
+        std::string text(3000, 'x');
+        const auto emit = [&] {
+            auto frame = begin(*context);
+            if (area) CHECK_FALSE(frame.text_area("field", "Field", text, 120));
+            else CHECK_FALSE(frame.text_input("field", "Field", text));
+            finish(frame);
+        };
+        emit();
+        const std::size_t present = context->statistics().retained_bytes;
+        REQUIRE(present >= 2 * text.size());
+        absent_frames(*context, 119);
+        // Widget and editor are both still retained one frame before expiry.
+        CHECK(context->statistics().retained_bytes == present);
+        absent_frames(*context, 1);
+        // The widget expired, and its editor (draft plus published copy) with it.
+        CHECK(context->statistics().retained_bytes + 2 * text.size() <= present);
+        // A returning editor is allocated afresh, and kept while it is present.
+        emit();
+        CHECK(context->statistics().retained_bytes == present);
+        for (int frame = 0; frame < 130; ++frame) emit();
+        CHECK(context->statistics().retained_bytes == present);
+    }
+}
+
+TEST_CASE("a text input that returns after expiry starts with a fresh undo history") {
+    auto context = make_context();
+    std::string value = "one";
+    const auto step = [&](std::vector<wui::InputEvent> events) {
+        wui::FrameInput input{{0, 0, 400, 300}};
+        input.events = std::move(events);
+        auto frame = begin(*context, input);
+        const bool changed = frame.text_input("field", "Field", value);
+        finish(frame);
+        return changed;
+    };
+    const auto focus = [&] {
+        step({});
+        step({key_event(wui::EventKind::key_down, wui::Key::tab)});
+    };
+    focus();
+    CHECK(step({typed("2")}));
+    CHECK(value == "one2");
+    // Absent for 119 completed frames: the editor, and its undo step, survive.
+    absent_frames(*context, 119);
+    focus();
+    CHECK(step({undo_key()}));
+    CHECK(value == "one");
+    CHECK(step({typed("3")}));
+    CHECK(value == "one3");
+    // Absent for 120 completed frames: the editor expired with its widget, so
+    // the returning field has no undo step left from its previous life.
+    absent_frames(*context, 120);
+    focus();
+    CHECK_FALSE(step({undo_key()}));
+    CHECK(value == "one3");
+}
+
+TEST_CASE("data grid column widths expire with the grid after 120 absent completed frames") {
+    auto context = make_context();
+    const std::array<wui::GridColumn, 2> columns{{{"A", 120}, {"B", 120}}};
+    std::optional<std::size_t> selected;
+    wui::GridSort sort;
+    const auto cell = [](std::size_t, std::size_t) { return std::string("cell"); };
+    const auto step = [&](std::vector<wui::InputEvent> events = {}) {
+        wui::FrameInput input{{0, 0, 400, 300}};
+        input.events = std::move(events);
+        auto frame = begin(*context, input);
+        frame.data_grid("entries", "Entries", columns, 10, cell, selected, sort, 200);
+        auto packet = finish(frame);
+        const auto found = std::find_if(packet->semantics.begin(), packet->semantics.end(),
+            [](const wui::Semantic& item) {
+                return item.role == wui::Role::grid_header && item.label == "A";
+            });
+        REQUIRE(found != packet->semantics.end());
+        return found->bounds;
+    };
+    const wui::Rect initial = step();
+    // Dragging A's right edge widens A; the width lives in the grid's state.
+    const auto widen = [&] {
+        const float edge = initial.x + initial.w;
+        step({{wui::EventKind::pointer_down, {edge, initial.y + 4}},
+              {wui::EventKind::pointer_move, {edge + 40, initial.y + 4}},
+              {wui::EventKind::pointer_up, {edge + 40, initial.y + 4}}});
+        CHECK(step().w == doctest::Approx(initial.w + 40));
+    };
+    widen();
+    absent_frames(*context, 119);
+    CHECK(step().w == doctest::Approx(initial.w + 40));
+    absent_frames(*context, 120);
+    CHECK(step().w == doctest::Approx(initial.w));
+}
+
 TEST_CASE("retained byte errors stop later model mutation") {
     auto desc = fixture_desc();
     desc.max_retained_bytes = 4096;
