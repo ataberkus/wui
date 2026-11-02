@@ -1304,7 +1304,7 @@ TEST_CASE("line and polygon meshes reused across frames match a fresh tessellati
     auto textures = std::make_shared<wui::TextureStore>(4 * 1024 * 1024);
     wui::Canvas reused(textures, 1);
     for (const float scale : {1.0f, 1.25f}) {
-        for (const auto [offset, width] :
+        for (const auto& [offset, width] :
              {std::pair{0.0f, 2.0f}, std::pair{0.0f, 2.0f}, std::pair{3.5f, 2.0f},
               std::pair{0.0f, 2.0f}, std::pair{0.0f, 1.5f}, std::pair{3.5f, 2.0f},
               std::pair{0.0f, 2.0f}, std::pair{-0.0f, 2.0f}}) {
