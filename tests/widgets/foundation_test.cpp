@@ -810,6 +810,39 @@ TEST_CASE("a text input that returns after expiry starts with a fresh undo histo
     CHECK(value == "one3");
 }
 
+TEST_CASE("a hidden text input keeps its caret until its widget expires") {
+    // Hiding a field (closed popup, collapsed section, list row scrolled
+    // away) only stops emitting it. Its editor, and so its caret, must
+    // survive while the widget is retained, and focus must still work.
+    auto context = make_context();
+    std::string value = "one";
+    const auto step = [&](std::vector<wui::InputEvent> events) {
+        wui::FrameInput input{{0, 0, 400, 300}};
+        input.events = std::move(events);
+        auto frame = begin(*context, input);
+        const bool changed = frame.text_input("field", "Field", value);
+        finish(frame);
+        return changed;
+    };
+    const auto focus = [&] {
+        step({});
+        step({key_event(wui::EventKind::key_down, wui::Key::tab)});
+        CHECK(context->statistics().focused != wui::Id{});
+    };
+    focus();
+    step({key_event(wui::EventKind::key_down, wui::Key::home)});
+    absent_frames(*context, 119);
+    focus();
+    CHECK(step({typed("X")}));
+    CHECK(value == "Xone");
+    // After expiry the field starts afresh, with the caret after the text.
+    step({key_event(wui::EventKind::key_down, wui::Key::home)});
+    absent_frames(*context, 120);
+    focus();
+    CHECK(step({typed("Y")}));
+    CHECK(value == "XoneY");
+}
+
 TEST_CASE("data grid column widths expire with the grid after 120 absent completed frames") {
     auto context = make_context();
     const std::array<wui::GridColumn, 2> columns{{{"A", 120}, {"B", 120}}};
