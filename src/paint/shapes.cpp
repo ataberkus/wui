@@ -1632,6 +1632,10 @@ struct Canvas::Impl {
                 return &entry;
             }
         }
+        // Room for a full cache before any texture exists, so recording the
+        // new entry below cannot throw: a throwing insert would lose the only
+        // copy of the created handle and leak its texture in the shared store.
+        shadows.reserve(detail::shadow_cache_capacity);
         if (shadows.size() >= detail::shadow_cache_capacity) {
             auto candidate = shadows.end();
             for (auto it = shadows.begin(); it != shadows.end(); ++it) {
@@ -1669,6 +1673,7 @@ struct Canvas::Impl {
         if (std::holds_alternative<Error>(created)) {
             return std::get<Error>(std::move(created));
         }
+        assert(shadows.size() < shadows.capacity() && "the shadow insert must not allocate");
         shadows.push_back({key, std::get<TextureHandle>(created), texture_size,
                            border_px, ++shadow_stamp});
         return &shadows.back();

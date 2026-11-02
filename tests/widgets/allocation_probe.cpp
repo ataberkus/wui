@@ -25,11 +25,20 @@ bool fail_after_mutation = false;
 bool injected = false;
 bool counting_semantic = false;
 std::size_t semantic_alloc_calls = 0;
+// While failing_ordinal is set, the request numbered fail_ordinal (from 0)
+// among those larger than two pointers throws, once.
+bool failing_ordinal = false;
+std::size_t allocation_ordinal = 0, fail_ordinal = 0;
 
 // Ignore tiny debug-STL iterator proxies only for fault injection: those can
 // allocate inside noexcept constructors. Measurement counts every request.
 void before_allocation(std::size_t bytes) {
     if (counting_semantic) ++semantic_alloc_calls;
+    if (failing_ordinal && bytes > 2 * sizeof(void*) && allocation_ordinal++ == fail_ordinal) {
+        injected = true;
+        failing_ordinal = false;
+        throw std::bad_alloc{};
+    }
     if (bytes >= 3 * sizeof(wui::Vertex) &&
         fail_after_mutation && watched_model && *watched_model) {
         injected = true;
@@ -378,6 +387,61 @@ int glyph_run_allocation_failure() {
     return 0;
 }
 
+// A new shadow texture is created before its cache entry is recorded. Failing
+// each allocation of the paint that first needs one, through Canvas::shadow
+// or through the elevated sheet a generic popup closes with, must never leave
+// that texture behind in the shared store once the canvas is gone.
+int shadow_allocation_failure() {
+    using wui::detail::CanvasAccess;
+    constexpr std::uint32_t side = 256;
+    constexpr std::size_t budget = std::size_t{side} * side * 4;
+    const std::vector<std::byte> whole(budget, std::byte{255});
+    const wui::detail::PanelElevation elevation{{0, 0, 0, 0.8f}, 8, 4, {1, 1, 1, 0.3f}};
+    for (const bool elevated : {false, true}) {
+        std::size_t failures = 0;
+        for (std::size_t k = 0;; ++k) {
+            auto textures = std::make_shared<wui::TextureStore>(budget);
+            {
+                wui::Canvas canvas(textures, 1);
+                canvas.begin({0, 0, 400, 300}, 1);
+                wui::detail::PanelMark mark{};
+                if (elevated) {
+                    mark = CanvasAccess::open_panel(canvas, {7}, {}, {40, 40, 200, 0}, 8,
+                                                    {0.2f, 0.2f, 0.25f, 1});
+                }
+                if (CanvasAccess::failed(canvas)) return 30;
+                injected = false;
+                allocation_ordinal = 0;
+                fail_ordinal = k;
+                failing_ordinal = true;
+                try {
+                    if (elevated) {
+                        CanvasAccess::close_panel(canvas, mark, {40, 40, 200, 120},
+                                                  {48, 48, 184, 104}, elevation);
+                    } else {
+                        canvas.shadow({40, 44, 200, 120}, 8, 8, {0, 0, 0, 0.8f});
+                    }
+                } catch (const std::bad_alloc&) {
+                    CanvasAccess::abort(canvas); // as the widget layer does
+                }
+                failing_ordinal = false;
+                (void)canvas.finish();
+            }
+            if (!injected) break;
+            ++failures;
+            if (!std::holds_alternative<wui::TextureHandle>(
+                    textures->create(side, side, whole, wui::AlphaMode::straight))) {
+                std::fprintf(stderr, "failing allocation %zu of a first %s left a texture in the store\n",
+                             k, elevated ? "elevated panel" : "shadow");
+                return 31;
+            }
+        }
+        if (failures == 0) return 32;
+    }
+    std::puts("Allocation failures while a shadow texture is first created leave no texture in the store.");
+    return 0;
+}
+
 // Generic popups (anchored, then modal) paint a raised sheet: its shadow comes
 // from the canvas shadow cache, so warmed frames still allocate nothing.
 int generic_popup_reuse() {
@@ -476,6 +540,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     if (const int failed = glyph_run_allocation_failure()) return failed;
+    if (const int failed = shadow_allocation_failure()) return failed;
     auto created = wui::Context::create({wui::Theme::dark(),
         std::make_shared<wui::TextureStore>(1024 * 1024), std::make_shared<Text>()});
     if (!std::holds_alternative<std::unique_ptr<wui::Context>>(created)) return 2;
