@@ -1,7 +1,9 @@
 #include <wui/types.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cstdint>
 
 namespace wui {
 namespace {
@@ -18,12 +20,18 @@ float unit_channel(float value) {
     return finite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.0f;
 }
 
+// Bit 31 is set exactly when `value` is infinite or NaN: one exponent unit
+// added to an all-ones exponent field carries into it.
+std::uint32_t nonfinite_bit(float value) {
+    return (std::bit_cast<std::uint32_t>(value) & 0x7f800000u) + 0x00800000u;
+}
+
 // Finite x, y, w, h, x + w and y + h with nonnegative size. An infinite or
 // NaN operand always makes a sum infinite or NaN, so finite edge sums
-// already imply finite components; bitwise & avoids a branch per test.
+// already imply finite components. Tested branch-free.
 bool valid_extent(Rect rect) {
-    return finite(rect.x + rect.w) & finite(rect.y + rect.h) & (rect.w >= 0.0f) &
-           (rect.h >= 0.0f);
+    const auto nonfinite = nonfinite_bit(rect.x + rect.w) | nonfinite_bit(rect.y + rect.h);
+    return ((nonfinite & 0x80000000u) == 0) & (rect.w >= 0.0f) & (rect.h >= 0.0f);
 }
 
 } // namespace

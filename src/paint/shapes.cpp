@@ -28,11 +28,17 @@ constexpr float epsilon = 1.0e-6f;
 
 bool finite(float value) { return std::isfinite(value); }
 bool finite(Vec2 value) { return finite(value.x) && finite(value.y); }
+// Bit 31 is set exactly when `value` is infinite or NaN: one exponent unit
+// added to an all-ones exponent field carries into it (see validate_packet).
+std::uint32_t nonfinite_bit(float value) {
+    return (std::bit_cast<std::uint32_t>(value) & 0x7f800000u) + 0x00800000u;
+}
 // Requires x, y, w, h, x + w and y + h to be finite. An infinite or NaN
 // operand always makes a sum infinite or NaN, so the two edge sums being
-// finite already implies that all four components are.
+// finite already implies that all four components are. Tested branch-free.
 bool finite(Rect value) {
-    return finite(value.x + value.w) & finite(value.y + value.h);
+    return ((nonfinite_bit(value.x + value.w) | nonfinite_bit(value.y + value.h)) &
+            0x80000000u) == 0;
 }
 // Each channel in [0, 1]. These comparisons are false for NaN and for both
 // infinities, so they also establish finiteness. Bitwise & instead of &&
@@ -49,7 +55,7 @@ Color premultiply_valid(Color value) {
     return {value.r * value.a, value.g * value.a, value.b * value.a, value.a};
 }
 bool valid_rect(Rect value) {
-    return finite(value) & (value.w >= 0.0f) & (value.h >= 0.0f);
+    return finite(value) && ((value.w >= 0.0f) & (value.h >= 0.0f));
 }
 bool equal(Rect a, Rect b) {
     return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
